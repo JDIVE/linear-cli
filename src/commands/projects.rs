@@ -4,7 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 use crate::OutputFormat;
 
 #[derive(Subcommand)]
@@ -100,14 +100,17 @@ pub async fn handle(cmd: ProjectCommands, output: OutputFormat) -> Result<()> {
 async fn list_projects(include_archived: bool, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
+    // Simplified query to reduce GraphQL complexity (was exceeding 10000 limit)
     let query = r#"
         query($includeArchived: Boolean) {
-            projects(first: 100, includeArchived: $includeArchived) {
+            projects(first: 50, includeArchived: $includeArchived) {
                 nodes {
                     id
                     name
-                    status { name }
-                    labels { nodes { name color parent { name } } }
+                    state
+                    url
+                    startDate
+                    targetDate
                 }
             }
         }
@@ -134,17 +137,10 @@ async fn list_projects(include_archived: bool, output: OutputFormat) -> Result<(
     let rows: Vec<ProjectRow> = projects
         .iter()
         .map(|p| {
-            let labels: Vec<String> = p["labels"]["nodes"]
-                .as_array()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|l| l["name"].as_str().unwrap_or("").to_string())
-                .collect();
-
             ProjectRow {
                 name: p["name"].as_str().unwrap_or("").to_string(),
-                status: p["status"]["name"].as_str().unwrap_or("-").to_string(),
-                labels: if labels.is_empty() { "-".to_string() } else { labels.join(", ") },
+                status: p["state"].as_str().unwrap_or("-").to_string(),
+                labels: "-".to_string(),
                 id: p["id"].as_str().unwrap_or("").to_string(),
             }
         })
@@ -227,9 +223,12 @@ async fn get_project(id: &str, output: OutputFormat) -> Result<()> {
 async fn create_project(name: &str, team: &str, description: Option<String>, color: Option<String>, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
+    // Resolve team key/name to UUID
+    let team_id = resolve_team_id(&client, team).await?;
+
     let mut input = json!({
         "name": name,
-        "teamIds": [team]
+        "teamIds": [team_id]
     });
 
     if let Some(desc) = description {
