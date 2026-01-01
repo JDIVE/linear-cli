@@ -4,7 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 
 #[derive(Subcommand)]
 pub enum StatusCommands {
@@ -49,6 +49,9 @@ pub async fn handle(cmd: StatusCommands) -> Result<()> {
 async fn list_statuses(team: &str) -> Result<()> {
     let client = LinearClient::new()?;
 
+    // Resolve team key/name to UUID
+    let team_id = resolve_team_id(&client, team).await?;
+
     let query = r#"
         query($teamId: String!) {
             team(id: $teamId) {
@@ -68,7 +71,7 @@ async fn list_statuses(team: &str) -> Result<()> {
         }
     "#;
 
-    let result = client.query(query, Some(json!({ "teamId": team }))).await?;
+    let result = client.query(query, Some(json!({ "teamId": team_id }))).await?;
     let team_data = &result["data"]["team"];
 
     if team_data.is_null() {
@@ -122,6 +125,9 @@ async fn list_statuses(team: &str) -> Result<()> {
 async fn get_status(id: &str, team: &str) -> Result<()> {
     let client = LinearClient::new()?;
 
+    // Resolve team key/name to UUID
+    let team_id = resolve_team_id(&client, team).await?;
+
     // First get all states for the team and find the matching one
     let query = r#"
         query($teamId: String!) {
@@ -142,7 +148,7 @@ async fn get_status(id: &str, team: &str) -> Result<()> {
         }
     "#;
 
-    let result = client.query(query, Some(json!({ "teamId": team }))).await?;
+    let result = client.query(query, Some(json!({ "teamId": team_id }))).await?;
     let team_data = &result["data"]["team"];
 
     if team_data.is_null() {
