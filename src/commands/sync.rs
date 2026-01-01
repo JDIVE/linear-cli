@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 
 /// Default directory to scan for local projects
 const DEFAULT_CODE_DIR: &str = r"D:\code";
@@ -309,6 +309,12 @@ async fn push_command(
 ) -> Result<()> {
     let dir = directory.unwrap_or_else(|| DEFAULT_CODE_DIR.to_string());
 
+    // Create client early to resolve team ID
+    let client = LinearClient::new()?;
+
+    // Resolve team key/name to UUID
+    let team_id = resolve_team_id(&client, &team).await?;
+
     if dry_run {
         println!("{}", "[DRY RUN] No projects will be created".yellow().bold());
         println!();
@@ -324,7 +330,6 @@ async fn push_command(
     let local_projects = scan_local_projects(&dir)?;
 
     // Fetch Linear projects
-    let client = LinearClient::new()?;
     let linear_projects = fetch_linear_projects(&client).await?;
 
     // Compare to find missing
@@ -368,7 +373,7 @@ async fn push_command(
             continue;
         }
 
-        match create_linear_project(&client, &project.name, &team, &project.path).await {
+        match create_linear_project(&client, &project.name, &team_id, &project.path).await {
             Ok(url) => {
                 println!("{}", "[created]".green());
                 if let Some(url) = url {
