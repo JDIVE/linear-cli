@@ -4,7 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 
 #[derive(Subcommand)]
 pub enum UserCommands {
@@ -39,7 +39,14 @@ pub async fn handle(cmd: UserCommands) -> Result<()> {
 async fn list_users(team: Option<String>) -> Result<()> {
     let client = LinearClient::new()?;
 
-    let query = if team.is_some() {
+    // Resolve team key/name to UUID if provided
+    let resolved_team = if let Some(ref t) = team {
+        Some(resolve_team_id(&client, t).await?)
+    } else {
+        None
+    };
+
+    let query = if resolved_team.is_some() {
         r#"
             query($teamId: String!) {
                 team(id: $teamId) {
@@ -67,13 +74,13 @@ async fn list_users(team: Option<String>) -> Result<()> {
         "#
     };
 
-    let result = if let Some(ref team_id) = team {
+    let result = if let Some(ref team_id) = resolved_team {
         client.query(query, Some(json!({ "teamId": team_id }))).await?
     } else {
         client.query(query, None).await?
     };
 
-    let users = if team.is_some() {
+    let users = if resolved_team.is_some() {
         result["data"]["team"]["members"]["nodes"]
             .as_array()
             .unwrap_or(&vec![])
