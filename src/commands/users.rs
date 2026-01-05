@@ -1,10 +1,11 @@
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
+use crate::cache::{Cache, CacheType};
 
 #[derive(Subcommand)]
 pub enum UserCommands {
@@ -37,17 +38,41 @@ pub async fn handle(cmd: UserCommands) -> Result<()> {
 }
 
 async fn list_users(team: Option<String>) -> Result<()> {
-    let client = LinearClient::new()?;
+    let cache = Cache::new()?;
 
-    // Resolve team key/name to UUID if provided
-    let resolved_team = if let Some(ref t) = team {
-        Some(resolve_team_id(&client, t).await?)
+    // Only use cache for full user list (no team filter)
+    let users: Vec<Value> = if team.is_none() {
+        // Try cache first
+        if let Some(cached) = cache.get(CacheType::Users) {
+            cached.as_array().cloned().unwrap_or_default()
+        } else {
+            // Fetch from API
+            let client = LinearClient::new()?;
+            let query = r#"
+                query {
+                    users(first: 100) {
+                        nodes {
+                            id
+                            name
+                            email
+                        }
+                    }
+                }
+            "#;
+
+            let result = client.query(query, None).await?;
+            let data = result["data"]["users"]["nodes"].clone();
+
+            // Cache the result
+            let _ = cache.set(CacheType::Users, data.clone());
+            data.as_array().cloned().unwrap_or_default()
+        }
     } else {
-        None
-    };
+        // Team-filtered users - always fetch from API (not cached)
+        let client = LinearClient::new()?;
+        let team_id = resolve_team_id(&client, team.as_ref().unwrap()).await?;
 
-    let query = if resolved_team.is_some() {
-        r#"
+        let query = r#"
             query($teamId: String!) {
                 team(id: $teamId) {
                     members {
@@ -59,39 +84,16 @@ async fn list_users(team: Option<String>) -> Result<()> {
                     }
                 }
             }
-        "#
-    } else {
-        r#"
-            query {
-                users(first: 100) {
-                    nodes {
-                        id
-                        name
-                        email
-                    }
-                }
-            }
-        "#
-    };
+        "#;
 
-    let result = if let Some(ref team_id) = resolved_team {
-        client
+        let result = client
             .query(query, Some(json!({ "teamId": team_id })))
-            .await?
-    } else {
-        client.query(query, None).await?
-    };
+            .await?;
 
-    let users = if resolved_team.is_some() {
         result["data"]["team"]["members"]["nodes"]
             .as_array()
-            .unwrap_or(&vec![])
-            .clone()
-    } else {
-        result["data"]["users"]["nodes"]
-            .as_array()
-            .unwrap_or(&vec![])
-            .clone()
+            .cloned()
+            .unwrap_or_default()
     };
 
     if users.is_empty() {
