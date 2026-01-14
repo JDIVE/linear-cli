@@ -84,6 +84,14 @@ pub fn set_api_key(key: &str) -> Result<()> {
 }
 
 pub fn get_api_key() -> Result<String> {
+    // Check for LINEAR_API_KEY environment variable first
+    if let Ok(api_key) = std::env::var("LINEAR_API_KEY") {
+        if !api_key.is_empty() {
+            return Ok(api_key);
+        }
+    }
+
+    // Fall back to config file
     let config = load_config()?;
     let current = config
         .current
