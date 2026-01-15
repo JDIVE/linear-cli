@@ -6,6 +6,7 @@ use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum UserCommands {
@@ -30,14 +31,14 @@ struct UserRow {
     id: String,
 }
 
-pub async fn handle(cmd: UserCommands) -> Result<()> {
+pub async fn handle(cmd: UserCommands, output: OutputFormat) -> Result<()> {
     match cmd {
-        UserCommands::List { team } => list_users(team).await,
-        UserCommands::Me => get_me().await,
+        UserCommands::List { team } => list_users(team, output).await,
+        UserCommands::Me => get_me(output).await,
     }
 }
 
-async fn list_users(team: Option<String>) -> Result<()> {
+async fn list_users(team: Option<String>, output: OutputFormat) -> Result<()> {
     let cache = Cache::new()?;
 
     // Only use cache for full user list (no team filter)
@@ -96,6 +97,11 @@ async fn list_users(team: Option<String>) -> Result<()> {
             .unwrap_or_default()
     };
 
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&users)?);
+        return Ok(());
+    }
+
     if users.is_empty() {
         println!("No users found.");
         return Ok(());
@@ -117,7 +123,7 @@ async fn list_users(team: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn get_me() -> Result<()> {
+async fn get_me(output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
@@ -141,6 +147,11 @@ async fn get_me() -> Result<()> {
 
     if user.is_null() {
         anyhow::bail!("Could not fetch current user");
+    }
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&user)?);
+        return Ok(());
     }
 
     println!("{}", user["name"].as_str().unwrap_or("").bold());

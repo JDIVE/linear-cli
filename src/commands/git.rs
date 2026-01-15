@@ -216,6 +216,34 @@ fn generate_branch_name(identifier: &str, title: &str) -> String {
     format!("{}/{}", identifier.to_lowercase(), slug)
 }
 
+/// Extract Linear issue ID from commit message
+fn extract_linear_issue(message: &str) -> Option<String> {
+    // Try Linear-Issue: trailer first
+    if let Some(line) = message.lines().find(|l| l.starts_with("Linear-Issue:")) {
+        return line
+            .strip_prefix("Linear-Issue:")
+            .map(|s| s.trim().to_string());
+    }
+
+    // Try [XXX-123] pattern in subject
+    let re_bracket = regex::Regex::new(r"\[([A-Z]+-\d+)\]").ok()?;
+    if let Some(caps) = re_bracket.captures(message) {
+        return caps.get(1).map(|m| m.as_str().to_string());
+    }
+
+    // Try linear.app URL
+    if let Some(pos) = message.find("linear.app/") {
+        // Extract issue ID from URL like linear.app/team/issue/XXX-123
+        let after = &message[pos..];
+        let re_url = regex::Regex::new(r"([A-Z]+-\d+)").ok()?;
+        if let Some(caps) = re_url.captures(after) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+    }
+
+    None
+}
+
 fn run_git_command(args: &[&str]) -> Result<String> {
     let output = Command::new("git").args(args).output()?;
 
@@ -424,11 +452,56 @@ async fn create_branch(issue_id: &str, custom_branch: Option<String>, vcs: Vcs) 
 async fn show_commits(limit: usize, vcs: Vcs) -> Result<()> {
     match vcs {
         Vcs::Git => {
-            println!(
-                "{}",
-                "The 'commits' subcommand is designed for jj. For git, use 'git log'.".yellow()
-            );
-            println!("Tip: Use --vcs jj to explicitly use jj commands.");
+            println!("{}", "Commits with Linear references:".cyan().bold());
+            println!("{}", "-".repeat(50));
+
+            // Get recent commits with their full messages
+            let limit_str = limit.to_string();
+            let output = run_git_command(&[
+                "log",
+                &format!("-{}", limit_str),
+                "--format=%H|%s|%b%x00",
+            ])?;
+
+            for entry in output.split('\0') {
+                if entry.trim().is_empty() {
+                    continue;
+                }
+
+                let parts: Vec<&str> = entry.splitn(3, '|').collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+
+                let hash = &parts[0][..8]; // Short hash
+                let subject = parts[1];
+                let body = parts.get(2).unwrap_or(&"");
+
+                // Check for Linear references in subject or body
+                let full_message = format!("{} {}", subject, body);
+                let has_linear_ref = full_message.contains("Linear-Issue:")
+                    || full_message.contains("Linear-URL:")
+                    || full_message.contains("linear.app/")
+                    || subject.contains('[') && subject.contains('-'); // [LIN-123] pattern
+
+                if has_linear_ref {
+                    // Try to extract issue ID
+                    let issue_id = extract_linear_issue(&full_message);
+                    if let Some(id) = issue_id {
+                        println!(
+                            "{} {} {}",
+                            hash.yellow(),
+                            subject,
+                            format!("[{}]", id).cyan()
+                        );
+                    } else {
+                        println!("{} {}", hash.yellow(), subject);
+                    }
+                } else {
+                    println!("{} {}", hash.dimmed(), subject);
+                }
+            }
+
             Ok(())
         }
         Vcs::Jj => {

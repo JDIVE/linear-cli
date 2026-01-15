@@ -5,6 +5,7 @@ use futures::future::join_all;
 use serde_json::json;
 
 use crate::api::LinearClient;
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum BulkCommands {
@@ -243,27 +244,35 @@ async fn get_issue_info(
     Ok((uuid, team_id, identifier))
 }
 
-pub async fn handle(cmd: BulkCommands) -> Result<()> {
+pub async fn handle(cmd: BulkCommands, output: OutputFormat) -> Result<()> {
     match cmd {
-        BulkCommands::UpdateState { state, issues } => bulk_update_state(&state, issues).await,
-        BulkCommands::Assign { user, issues } => bulk_assign(&user, issues).await,
-        BulkCommands::Label { label, issues } => bulk_label(&label, issues).await,
-        BulkCommands::Unassign { issues } => bulk_unassign(issues).await,
+        BulkCommands::UpdateState { state, issues } => {
+            bulk_update_state(&state, issues, output).await
+        }
+        BulkCommands::Assign { user, issues } => bulk_assign(&user, issues, output).await,
+        BulkCommands::Label { label, issues } => bulk_label(&label, issues, output).await,
+        BulkCommands::Unassign { issues } => bulk_unassign(issues, output).await,
     }
 }
 
-async fn bulk_update_state(state: &str, issues: Vec<String>) -> Result<()> {
+async fn bulk_update_state(state: &str, issues: Vec<String>, output: OutputFormat) -> Result<()> {
     if issues.is_empty() {
-        println!("No issues specified.");
+        if output == OutputFormat::Json {
+            println!("{}", json!({ "error": "No issues specified", "results": [] }));
+        } else {
+            println!("No issues specified.");
+        }
         return Ok(());
     }
 
-    println!(
-        "{} Updating state to '{}' for {} issues...",
-        ">>".cyan(),
-        state,
-        issues.len()
-    );
+    if output != OutputFormat::Json {
+        println!(
+            "{} Updating state to '{}' for {} issues...",
+            ">>".cyan(),
+            state,
+            issues.len()
+        );
+    }
 
     let client = LinearClient::new()?;
     let state_owned = state.to_string();
@@ -279,23 +288,29 @@ async fn bulk_update_state(state: &str, issues: Vec<String>) -> Result<()> {
         .collect();
 
     let results = join_all(futures).await;
-    print_summary(&results, "state updated");
+    print_summary(&results, "state updated", output);
 
     Ok(())
 }
 
-async fn bulk_assign(user: &str, issues: Vec<String>) -> Result<()> {
+async fn bulk_assign(user: &str, issues: Vec<String>, output: OutputFormat) -> Result<()> {
     if issues.is_empty() {
-        println!("No issues specified.");
+        if output == OutputFormat::Json {
+            println!("{}", json!({ "error": "No issues specified", "results": [] }));
+        } else {
+            println!("No issues specified.");
+        }
         return Ok(());
     }
 
-    println!(
-        "{} Assigning {} issues to '{}'...",
-        ">>".cyan(),
-        issues.len(),
-        user
-    );
+    if output != OutputFormat::Json {
+        println!(
+            "{} Assigning {} issues to '{}'...",
+            ">>".cyan(),
+            issues.len(),
+            user
+        );
+    }
 
     let client = LinearClient::new()?;
 
@@ -303,7 +318,14 @@ async fn bulk_assign(user: &str, issues: Vec<String>) -> Result<()> {
     let user_id = match resolve_user_id(&client, user).await {
         Ok(id) => id,
         Err(e) => {
-            println!("{} Failed to resolve user '{}': {}", "x".red(), user, e);
+            if output == OutputFormat::Json {
+                println!(
+                    "{}",
+                    json!({ "error": format!("Failed to resolve user '{}': {}", user, e), "results": [] })
+                );
+            } else {
+                println!("{} Failed to resolve user '{}': {}", "x".red(), user, e);
+            }
             return Ok(());
         }
     };
@@ -319,23 +341,29 @@ async fn bulk_assign(user: &str, issues: Vec<String>) -> Result<()> {
         .collect();
 
     let results = join_all(futures).await;
-    print_summary(&results, "assigned");
+    print_summary(&results, "assigned", output);
 
     Ok(())
 }
 
-async fn bulk_label(label: &str, issues: Vec<String>) -> Result<()> {
+async fn bulk_label(label: &str, issues: Vec<String>, output: OutputFormat) -> Result<()> {
     if issues.is_empty() {
-        println!("No issues specified.");
+        if output == OutputFormat::Json {
+            println!("{}", json!({ "error": "No issues specified", "results": [] }));
+        } else {
+            println!("No issues specified.");
+        }
         return Ok(());
     }
 
-    println!(
-        "{} Adding label '{}' to {} issues...",
-        ">>".cyan(),
-        label,
-        issues.len()
-    );
+    if output != OutputFormat::Json {
+        println!(
+            "{} Adding label '{}' to {} issues...",
+            ">>".cyan(),
+            label,
+            issues.len()
+        );
+    }
 
     let client = LinearClient::new()?;
 
@@ -343,7 +371,14 @@ async fn bulk_label(label: &str, issues: Vec<String>) -> Result<()> {
     let label_id = match resolve_label_id(&client, label).await {
         Ok(id) => id,
         Err(e) => {
-            println!("{} Failed to resolve label '{}': {}", "x".red(), label, e);
+            if output == OutputFormat::Json {
+                println!(
+                    "{}",
+                    json!({ "error": format!("Failed to resolve label '{}': {}", label, e), "results": [] })
+                );
+            } else {
+                println!("{} Failed to resolve label '{}': {}", "x".red(), label, e);
+            }
             return Ok(());
         }
     };
@@ -359,18 +394,24 @@ async fn bulk_label(label: &str, issues: Vec<String>) -> Result<()> {
         .collect();
 
     let results = join_all(futures).await;
-    print_summary(&results, "labeled");
+    print_summary(&results, "labeled", output);
 
     Ok(())
 }
 
-async fn bulk_unassign(issues: Vec<String>) -> Result<()> {
+async fn bulk_unassign(issues: Vec<String>, output: OutputFormat) -> Result<()> {
     if issues.is_empty() {
-        println!("No issues specified.");
+        if output == OutputFormat::Json {
+            println!("{}", json!({ "error": "No issues specified", "results": [] }));
+        } else {
+            println!("No issues specified.");
+        }
         return Ok(());
     }
 
-    println!("{} Unassigning {} issues...", ">>".cyan(), issues.len());
+    if output != OutputFormat::Json {
+        println!("{} Unassigning {} issues...", ">>".cyan(), issues.len());
+    }
 
     let client = LinearClient::new()?;
 
@@ -384,7 +425,7 @@ async fn bulk_unassign(issues: Vec<String>) -> Result<()> {
         .collect();
 
     let results = join_all(futures).await;
-    print_summary(&results, "unassigned");
+    print_summary(&results, "unassigned", output);
 
     Ok(())
 }
@@ -643,11 +684,39 @@ async fn add_label_to_issue(client: &LinearClient, issue_id: &str, label_id: &st
     }
 }
 
-fn print_summary(results: &[BulkResult], action: &str) {
-    println!();
-
+fn print_summary(results: &[BulkResult], action: &str, output: OutputFormat) {
     let success_count = results.iter().filter(|r| r.success).count();
     let failure_count = results.len() - success_count;
+
+    if output == OutputFormat::Json {
+        let json_results: Vec<_> = results
+            .iter()
+            .map(|r| {
+                json!({
+                    "issue_id": r.issue_id,
+                    "identifier": r.identifier,
+                    "success": r.success,
+                    "error": r.error,
+                })
+            })
+            .collect();
+
+        println!(
+            "{}",
+            json!({
+                "action": action,
+                "results": json_results,
+                "summary": {
+                    "total": results.len(),
+                    "succeeded": success_count,
+                    "failed": failure_count,
+                }
+            })
+        );
+        return;
+    }
+
+    println!();
 
     // Print individual results
     for result in results {

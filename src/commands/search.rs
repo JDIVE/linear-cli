@@ -4,6 +4,7 @@ use serde_json::json;
 use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum SearchCommands {
@@ -57,22 +58,22 @@ struct ProjectRow {
     id: String,
 }
 
-pub async fn handle(cmd: SearchCommands) -> Result<()> {
+pub async fn handle(cmd: SearchCommands, output: OutputFormat) -> Result<()> {
     match cmd {
         SearchCommands::Issues {
             query,
             limit,
             archived,
-        } => search_issues(&query, limit, archived).await,
+        } => search_issues(&query, limit, archived, output).await,
         SearchCommands::Projects {
             query,
             limit,
             archived,
-        } => search_projects(&query, limit, archived).await,
+        } => search_projects(&query, limit, archived, output).await,
     }
 }
 
-async fn search_issues(query: &str, limit: u32, include_archived: bool) -> Result<()> {
+async fn search_issues(query: &str, limit: u32, include_archived: bool, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     let graphql_query = r#"
@@ -106,6 +107,11 @@ async fn search_issues(query: &str, limit: u32, include_archived: bool) -> Resul
     let issues = result["data"]["issues"]["nodes"]
         .as_array()
         .unwrap_or(&empty);
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&issues)?);
+        return Ok(());
+    }
 
     if issues.is_empty() {
         println!("No issues found matching: {}", query);
@@ -141,7 +147,7 @@ async fn search_issues(query: &str, limit: u32, include_archived: bool) -> Resul
     Ok(())
 }
 
-async fn search_projects(query: &str, limit: u32, include_archived: bool) -> Result<()> {
+async fn search_projects(query: &str, limit: u32, include_archived: bool, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     let graphql_query = r#"
@@ -171,6 +177,11 @@ async fn search_projects(query: &str, limit: u32, include_archived: bool) -> Res
     let projects = result["data"]["projects"]["nodes"]
         .as_array()
         .unwrap_or(&empty);
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&projects)?);
+        return Ok(());
+    }
 
     if projects.is_empty() {
         println!("No projects found matching: {}", query);

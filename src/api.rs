@@ -59,6 +59,7 @@ pub async fn resolve_team_id(client: &LinearClient, team: &str) -> Result<String
     )
 }
 
+#[derive(Clone)]
 pub struct LinearClient {
     client: Client,
     api_key: String,

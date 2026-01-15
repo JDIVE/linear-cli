@@ -46,6 +46,7 @@ pub enum CacheType {
     Users,
     Statuses,
     Labels,
+    Projects,
 }
 
 impl CacheType {
@@ -56,6 +57,7 @@ impl CacheType {
             CacheType::Users => "users.json",
             CacheType::Statuses => "statuses.json",
             CacheType::Labels => "labels.json",
+            CacheType::Projects => "projects.json",
         }
     }
 
@@ -66,6 +68,7 @@ impl CacheType {
             CacheType::Users => "Users",
             CacheType::Statuses => "Statuses",
             CacheType::Labels => "Labels",
+            CacheType::Projects => "Projects",
         }
     }
 
@@ -76,6 +79,7 @@ impl CacheType {
             CacheType::Users,
             CacheType::Statuses,
             CacheType::Labels,
+            CacheType::Projects,
         ]
     }
 }

@@ -5,6 +5,7 @@ use serde_json::json;
 use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum NotificationCommands {
@@ -44,12 +45,12 @@ struct NotificationRow {
     id: String,
 }
 
-pub async fn handle(cmd: NotificationCommands) -> Result<()> {
+pub async fn handle(cmd: NotificationCommands, output: OutputFormat) -> Result<()> {
     match cmd {
-        NotificationCommands::List { all, limit } => list_notifications(all, limit).await,
+        NotificationCommands::List { all, limit } => list_notifications(all, limit, output).await,
         NotificationCommands::Read { id } => mark_as_read(&id).await,
         NotificationCommands::ReadAll => mark_all_as_read().await,
-        NotificationCommands::Count => show_count().await,
+        NotificationCommands::Count => show_count(output).await,
     }
 }
 
@@ -68,7 +69,7 @@ fn format_notification_type(notification_type: &str) -> String {
     }
 }
 
-async fn list_notifications(include_all: bool, limit: u32) -> Result<()> {
+async fn list_notifications(include_all: bool, limit: u32, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
@@ -116,6 +117,11 @@ async fn list_notifications(include_all: bool, limit: u32) -> Result<()> {
             .filter(|n| n["readAt"].is_null())
             .collect()
     };
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&filtered)?);
+        return Ok(());
+    }
 
     if filtered.is_empty() {
         if include_all {
@@ -246,6 +252,7 @@ async fn mark_all_as_read() -> Result<()> {
     let unread: Vec<_> = notifications
         .iter()
         .filter(|n| n["readAt"].is_null())
+        .filter_map(|n| n["id"].as_str())
         .collect();
 
     if unread.is_empty() {
@@ -254,6 +261,7 @@ async fn mark_all_as_read() -> Result<()> {
     }
 
     let count = unread.len();
+    println!("Marking {} notifications as read...", count);
 
     let mutation = r#"
         mutation($id: String!) {
@@ -263,15 +271,20 @@ async fn mark_all_as_read() -> Result<()> {
         }
     "#;
 
-    let mut success_count = 0;
-    for notification in unread {
-        if let Some(id) = notification["id"].as_str() {
-            let result = client.mutate(mutation, Some(json!({ "id": id }))).await;
-            if result.is_ok() {
-                success_count += 1;
+    // Run mutations in parallel using futures::future::join_all
+    let futures: Vec<_> = unread
+        .iter()
+        .map(|id| {
+            let client = client.clone();
+            let id = id.to_string();
+            async move {
+                client.mutate(mutation, Some(json!({ "id": id }))).await.is_ok()
             }
-        }
-    }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+    let success_count = results.iter().filter(|&&r| r).count();
 
     println!(
         "{} Marked {} notification{} as read",
@@ -292,7 +305,7 @@ async fn mark_all_as_read() -> Result<()> {
     Ok(())
 }
 
-async fn show_count() -> Result<()> {
+async fn show_count(output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
@@ -316,6 +329,11 @@ async fn show_count() -> Result<()> {
         .iter()
         .filter(|n| n["readAt"].is_null())
         .count();
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&json!({ "count": unread_count }))?);
+        return Ok(());
+    }
 
     if unread_count == 0 {
         println!("{} No unread notifications", "+".green());

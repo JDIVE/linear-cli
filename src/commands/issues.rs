@@ -2,11 +2,12 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
+use std::io::{self, BufRead};
 use std::process::Command;
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
-use crate::OutputFormat;
+use crate::{AgentOptions, OutputFormat};
 
 use super::templates;
 
@@ -45,24 +46,26 @@ pub enum IssueCommands {
     #[command(after_help = r#"EXAMPLES:
     linear issues get LIN-123                  # View issue by identifier
     linear i get abc123-uuid                   # View issue by ID
-    linear i get LIN-123 --output json         # Output as JSON"#)]
+    linear i get LIN-1 LIN-2 LIN-3             # Get multiple issues
+    linear i get LIN-123 --output json         # Output as JSON
+    echo "LIN-123" | linear i get -            # Read ID from stdin (piping)"#)]
     Get {
-        /// Issue ID or identifier (e.g., "LIN-123")
-        id: String,
+        /// Issue ID(s) or identifier(s). Use "-" to read from stdin.
+        ids: Vec<String>,
     },
     /// Create a new issue
     #[command(after_help = r#"EXAMPLES:
     linear issues create "Fix bug" -t ENG      # Create with title and team
     linear i create "Feature" -t ENG -p 2      # Create with high priority
     linear i create "Task" -t ENG -a me        # Assign to yourself
-    linear i create "Bug" -t ENG -s "Backlog"  # Set initial status"#)]
+    linear i create "Bug" -t ENG --dry-run     # Preview without creating"#)]
     Create {
         /// Issue title
         title: String,
         /// Team name or ID (can be provided via template)
         #[arg(short, long)]
         team: Option<String>,
-        /// Issue description (markdown)
+        /// Issue description (markdown). Use "-" to read from stdin.
         #[arg(short, long)]
         description: Option<String>,
         /// Priority (0=none, 1=urgent, 2=high, 3=normal, 4=low)
@@ -80,6 +83,9 @@ pub enum IssueCommands {
         /// Template name to use for default values
         #[arg(long)]
         template: Option<String>,
+        /// Preview without creating (dry run)
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Update an existing issue
     #[command(after_help = r#"EXAMPLES:
@@ -159,7 +165,7 @@ struct IssueRow {
     assignee: String,
 }
 
-pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
+pub async fn handle(cmd: IssueCommands, output: OutputFormat, agent_opts: AgentOptions) -> Result<()> {
     match cmd {
         IssueCommands::List {
             team,
@@ -168,8 +174,25 @@ pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
             project,
             archived,
             limit,
-        } => list_issues(team, state, assignee, project, archived, limit, output).await,
-        IssueCommands::Get { id } => get_issue(&id, output).await,
+        } => list_issues(team, state, assignee, project, archived, limit, output, agent_opts).await,
+        IssueCommands::Get { ids } => {
+            // Support reading from stdin if no IDs provided or if "-" is passed
+            let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
+                // Read from stdin
+                let stdin = io::stdin();
+                stdin.lock().lines()
+                    .filter_map(|l| l.ok())
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            } else {
+                ids
+            };
+            if final_ids.is_empty() {
+                anyhow::bail!("No issue IDs provided. Provide IDs as arguments or pipe them via stdin.");
+            }
+            get_issues(&final_ids, output).await
+        }
         IssueCommands::Create {
             title,
             team,
@@ -179,6 +202,7 @@ pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
             assignee,
             labels,
             template,
+            dry_run,
         } => {
             // Load template if specified
             let tpl = if let Some(ref tpl_name) = template {
@@ -208,7 +232,16 @@ pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
             };
 
             // Merge template defaults with CLI args (CLI takes precedence)
-            let final_description = description.or(tpl.description.clone());
+            // Support reading description from stdin if "-" is passed
+            let final_description = match description.as_deref() {
+                Some("-") => {
+                    let stdin = io::stdin();
+                    let lines: Vec<String> = stdin.lock().lines().filter_map(|l| l.ok()).collect();
+                    Some(lines.join("\n"))
+                }
+                Some(d) => Some(d.to_string()),
+                None => tpl.description.clone(),
+            };
             let final_priority = priority.or(tpl.default_priority);
 
             // Merge labels: template labels + CLI labels
@@ -224,6 +257,8 @@ pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
                 assignee,
                 final_labels,
                 output,
+                agent_opts,
+                dry_run,
             )
             .await
         }
@@ -234,14 +269,26 @@ pub async fn handle(cmd: IssueCommands, output: OutputFormat) -> Result<()> {
             priority,
             state,
             assignee,
-        } => update_issue(&id, title, description, priority, state, assignee, output).await,
-        IssueCommands::Delete { id, force } => delete_issue(&id, force).await,
+        } => {
+            // Support reading description from stdin if "-" is passed
+            let final_description = match description.as_deref() {
+                Some("-") => {
+                    let stdin = io::stdin();
+                    let lines: Vec<String> = stdin.lock().lines().filter_map(|l| l.ok()).collect();
+                    Some(lines.join("\n"))
+                }
+                Some(d) => Some(d.to_string()),
+                None => None,
+            };
+            update_issue(&id, title, final_description, priority, state, assignee, output, agent_opts).await
+        }
+        IssueCommands::Delete { id, force } => delete_issue(&id, force, agent_opts).await,
         IssueCommands::Start {
             id,
             checkout,
             branch,
-        } => start_issue(&id, checkout, branch).await,
-        IssueCommands::Stop { id, unassign } => stop_issue(&id, unassign).await,
+        } => start_issue(&id, checkout, branch, agent_opts).await,
+        IssueCommands::Stop { id, unassign } => stop_issue(&id, unassign, agent_opts).await,
     }
 }
 
@@ -264,6 +311,7 @@ async fn list_issues(
     include_archived: bool,
     limit: u32,
     output: OutputFormat,
+    _agent_opts: AgentOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
@@ -354,6 +402,94 @@ async fn list_issues(
     let table = Table::new(rows).to_string();
     println!("{}", table);
     println!("\n{} issues", issues.len());
+
+    Ok(())
+}
+
+/// Get multiple issues (supports batch fetching)
+async fn get_issues(ids: &[String], output: OutputFormat) -> Result<()> {
+    // Handle single ID (most common case)
+    if ids.len() == 1 {
+        return get_issue(&ids[0], output).await;
+    }
+
+    let client = LinearClient::new()?;
+
+    // For multiple IDs, fetch them in parallel
+    let futures: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            let client = client.clone();
+            let id = id.clone();
+            async move {
+                let query = r#"
+                    query($id: String!) {
+                        issue(id: $id) {
+                            id
+                            identifier
+                            title
+                            description
+                            priority
+                            url
+                            state { name }
+                            team { name }
+                            assignee { name }
+                        }
+                    }
+                "#;
+                let result = client.query(query, Some(json!({ "id": id }))).await;
+                (id, result)
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    // JSON output: array of issues
+    if matches!(output, OutputFormat::Json) {
+        let issues: Vec<_> = results
+            .iter()
+            .filter_map(|(_, r)| {
+                r.as_ref().ok().and_then(|data| {
+                    let issue = &data["data"]["issue"];
+                    if !issue.is_null() {
+                        Some(issue.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&issues)?);
+        return Ok(());
+    }
+
+    // Table output
+    for (id, result) in results {
+        match result {
+            Ok(data) => {
+                let issue = &data["data"]["issue"];
+                if issue.is_null() {
+                    eprintln!("{} Issue not found: {}", "!".yellow(), id);
+                } else {
+                    let identifier = issue["identifier"].as_str().unwrap_or("");
+                    let title = issue["title"].as_str().unwrap_or("");
+                    let state = issue["state"]["name"].as_str().unwrap_or("-");
+                    let priority = priority_to_string(issue["priority"].as_i64());
+                    println!(
+                        "{} {} [{}] {}",
+                        identifier.cyan(),
+                        title,
+                        state,
+                        priority
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("{} Error fetching {}: {}", "!".red(), id, e);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -464,6 +600,8 @@ async fn create_issue(
     assignee: Option<String>,
     labels: Vec<String>,
     output: OutputFormat,
+    agent_opts: AgentOptions,
+    dry_run: bool,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
@@ -482,16 +620,16 @@ async fn create_issue(
     });
 
     // CLI args override template values
-    if let Some(desc) = description {
+    if let Some(ref desc) = description {
         input["description"] = json!(desc);
     }
     if let Some(p) = priority {
         input["priority"] = json!(p);
     }
-    if let Some(s) = state {
+    if let Some(ref s) = state {
         input["stateId"] = json!(s);
     }
-    if let Some(a) = assignee {
+    if let Some(ref a) = assignee {
         input["assigneeId"] = json!(a);
     }
     if !labels.is_empty() {
@@ -505,8 +643,48 @@ async fn create_issue(
             })
             .unwrap_or_default();
         let mut all_labels = existing;
-        all_labels.extend(labels);
+        all_labels.extend(labels.clone());
         input["labelIds"] = json!(all_labels);
+    }
+
+    // Dry run: show what would be created without actually creating
+    if dry_run {
+        if matches!(output, OutputFormat::Json) {
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "dry_run": true,
+                "would_create": {
+                    "title": final_title,
+                    "team": final_team,
+                    "teamId": team_id,
+                    "description": description,
+                    "priority": priority,
+                    "state": state,
+                    "assignee": assignee,
+                    "labels": labels,
+                }
+            }))?);
+        } else {
+            println!("{}", "[DRY RUN] Would create issue:".yellow().bold());
+            println!("  Title:       {}", final_title);
+            println!("  Team:        {} ({})", final_team, team_id);
+            if let Some(ref desc) = description {
+                let preview = if desc.len() > 50 { format!("{}...", &desc[..50]) } else { desc.clone() };
+                println!("  Description: {}", preview);
+            }
+            if let Some(p) = priority {
+                println!("  Priority:    {}", p);
+            }
+            if let Some(ref s) = state {
+                println!("  State:       {}", s);
+            }
+            if let Some(ref a) = assignee {
+                println!("  Assignee:    {}", a);
+            }
+            if !labels.is_empty() {
+                println!("  Labels:      {}", labels.join(", "));
+            }
+        }
+        return Ok(());
     }
 
     let mutation = r#"
@@ -529,6 +707,13 @@ async fn create_issue(
 
     if result["data"]["issueCreate"]["success"].as_bool() == Some(true) {
         let issue = &result["data"]["issueCreate"]["issue"];
+        let identifier = issue["identifier"].as_str().unwrap_or("");
+
+        // --id-only: Just output the identifier for chaining
+        if agent_opts.id_only {
+            println!("{}", identifier);
+            return Ok(());
+        }
 
         // Handle JSON output
         if matches!(output, OutputFormat::Json) {
@@ -536,7 +721,12 @@ async fn create_issue(
             return Ok(());
         }
 
-        let identifier = issue["identifier"].as_str().unwrap_or("");
+        // Quiet mode: minimal output
+        if agent_opts.quiet {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
         let issue_title = issue["title"].as_str().unwrap_or("");
         println!(
             "{} Created issue: {} {}",
@@ -561,6 +751,7 @@ async fn update_issue(
     state: Option<String>,
     assignee: Option<String>,
     output: OutputFormat,
+    agent_opts: AgentOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
@@ -583,7 +774,9 @@ async fn update_issue(
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-        println!("No updates specified.");
+        if !agent_opts.quiet {
+            println!("No updates specified.");
+        }
         return Ok(());
     }
 
@@ -605,6 +798,13 @@ async fn update_issue(
 
     if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
         let issue = &result["data"]["issueUpdate"]["issue"];
+        let identifier = issue["identifier"].as_str().unwrap_or("");
+
+        // --id-only: Just output the identifier
+        if agent_opts.id_only {
+            println!("{}", identifier);
+            return Ok(());
+        }
 
         // Handle JSON output
         if matches!(output, OutputFormat::Json) {
@@ -612,10 +812,16 @@ async fn update_issue(
             return Ok(());
         }
 
+        // Quiet mode
+        if agent_opts.quiet {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
         println!(
             "{} Updated issue: {} {}",
             "+".green(),
-            issue["identifier"].as_str().unwrap_or(""),
+            identifier,
             issue["title"].as_str().unwrap_or("")
         );
     } else {
@@ -625,8 +831,8 @@ async fn update_issue(
     Ok(())
 }
 
-async fn delete_issue(id: &str, force: bool) -> Result<()> {
-    if !force {
+async fn delete_issue(id: &str, force: bool, agent_opts: AgentOptions) -> Result<()> {
+    if !force && !agent_opts.quiet {
         let confirm = dialoguer::Confirm::new()
             .with_prompt(format!("Delete issue {}? This cannot be undone", id))
             .default(false)
@@ -636,6 +842,9 @@ async fn delete_issue(id: &str, force: bool) -> Result<()> {
             println!("Cancelled.");
             return Ok(());
         }
+    } else if !force && agent_opts.quiet {
+        // In quiet mode without force, require --force
+        anyhow::bail!("Use --force to delete in quiet mode");
     }
 
     let client = LinearClient::new()?;
@@ -651,7 +860,9 @@ async fn delete_issue(id: &str, force: bool) -> Result<()> {
     let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
 
     if result["data"]["issueDelete"]["success"].as_bool() == Some(true) {
-        println!("{} Issue deleted", "+".green());
+        if !agent_opts.quiet {
+            println!("{} Issue deleted", "+".green());
+        }
     } else {
         anyhow::bail!("Failed to delete issue");
     }
@@ -697,7 +908,7 @@ fn generate_branch_name(identifier: &str, title: &str) -> String {
     format!("{}/{}", identifier.to_lowercase(), slug)
 }
 
-async fn start_issue(id: &str, checkout: bool, custom_branch: Option<String>) -> Result<()> {
+async fn start_issue(id: &str, checkout: bool, custom_branch: Option<String>, agent_opts: AgentOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     // First, get the issue details including team info to find the "started" state
@@ -786,20 +997,26 @@ async fn start_issue(id: &str, checkout: bool, custom_branch: Option<String>) ->
 
     if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
         let updated = &result["data"]["issueUpdate"]["issue"];
-        println!(
-            "{} Started issue: {} {}",
-            "+".green(),
-            updated["identifier"].as_str().unwrap_or("").cyan(),
-            updated["title"].as_str().unwrap_or("")
-        );
-        println!(
-            "  State:    {}",
-            updated["state"]["name"].as_str().unwrap_or(state_name)
-        );
-        println!(
-            "  Assignee: {}",
-            updated["assignee"]["name"].as_str().unwrap_or("me")
-        );
+        let updated_id = updated["identifier"].as_str().unwrap_or("");
+
+        if agent_opts.id_only {
+            println!("{}", updated_id);
+        } else if !agent_opts.quiet {
+            println!(
+                "{} Started issue: {} {}",
+                "+".green(),
+                updated_id.cyan(),
+                updated["title"].as_str().unwrap_or("")
+            );
+            println!(
+                "  State:    {}",
+                updated["state"]["name"].as_str().unwrap_or(state_name)
+            );
+            println!(
+                "  Assignee: {}",
+                updated["assignee"]["name"].as_str().unwrap_or("me")
+            );
+        }
     } else {
         anyhow::bail!("Failed to start issue");
     }
@@ -814,23 +1031,31 @@ async fn start_issue(id: &str, checkout: bool, custom_branch: Option<String>) ->
             })
             .unwrap_or_else(|| generate_branch_name(identifier, title));
 
-        println!();
+        if !agent_opts.quiet {
+            println!();
+        }
         if branch_exists(&branch_name) {
-            println!("Checking out existing branch: {}", branch_name.green());
+            if !agent_opts.quiet {
+                println!("Checking out existing branch: {}", branch_name.green());
+            }
             run_git_command(&["checkout", &branch_name])?;
         } else {
-            println!("Creating and checking out branch: {}", branch_name.green());
+            if !agent_opts.quiet {
+                println!("Creating and checking out branch: {}", branch_name.green());
+            }
             run_git_command(&["checkout", "-b", &branch_name])?;
         }
 
         let current = run_git_command(&["rev-parse", "--abbrev-ref", "HEAD"])?;
-        println!("{} Now on branch: {}", "+".green(), current);
+        if !agent_opts.quiet {
+            println!("{} Now on branch: {}", "+".green(), current);
+        }
     }
 
     Ok(())
 }
 
-async fn stop_issue(id: &str, unassign: bool) -> Result<()> {
+async fn stop_issue(id: &str, unassign: bool, agent_opts: AgentOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     // First, get the issue details including team info to find the "backlog" or "unstarted" state
@@ -916,20 +1141,26 @@ async fn stop_issue(id: &str, unassign: bool) -> Result<()> {
 
     if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
         let updated = &result["data"]["issueUpdate"]["issue"];
-        println!(
-            "{} Stopped issue: {} {}",
-            "+".green(),
-            updated["identifier"].as_str().unwrap_or("").cyan(),
-            updated["title"].as_str().unwrap_or("")
-        );
-        println!(
-            "  State:    {}",
-            updated["state"]["name"].as_str().unwrap_or(state_name)
-        );
-        if unassign {
-            println!("  Assignee: (unassigned)");
-        } else if let Some(assignee) = updated["assignee"]["name"].as_str() {
-            println!("  Assignee: {}", assignee);
+        let updated_id = updated["identifier"].as_str().unwrap_or("");
+
+        if agent_opts.id_only {
+            println!("{}", updated_id);
+        } else if !agent_opts.quiet {
+            println!(
+                "{} Stopped issue: {} {}",
+                "+".green(),
+                updated_id.cyan(),
+                updated["title"].as_str().unwrap_or("")
+            );
+            println!(
+                "  State:    {}",
+                updated["state"]["name"].as_str().unwrap_or(state_name)
+            );
+            if unassign {
+                println!("  Assignee: (unassigned)");
+            } else if let Some(assignee) = updated["assignee"]["name"].as_str() {
+                println!("  Assignee: {}", assignee);
+            }
         }
     } else {
         anyhow::bail!("Failed to stop issue");

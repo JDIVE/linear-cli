@@ -5,6 +5,7 @@ use serde_json::json;
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum CycleCommands {
@@ -44,14 +45,14 @@ struct CycleRow {
     id: String,
 }
 
-pub async fn handle(cmd: CycleCommands) -> Result<()> {
+pub async fn handle(cmd: CycleCommands, output: OutputFormat) -> Result<()> {
     match cmd {
-        CycleCommands::List { team, all } => list_cycles(&team, all).await,
-        CycleCommands::Current { team } => current_cycle(&team).await,
+        CycleCommands::List { team, all } => list_cycles(&team, all, output).await,
+        CycleCommands::Current { team } => current_cycle(&team, output).await,
     }
 }
 
-async fn list_cycles(team: &str, include_all: bool) -> Result<()> {
+async fn list_cycles(team: &str, include_all: bool, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     // Resolve team key/name to UUID
@@ -85,6 +86,11 @@ async fn list_cycles(team: &str, include_all: bool) -> Result<()> {
 
     if team_data.is_null() {
         anyhow::bail!("Team not found: {}", team);
+    }
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&team_data)?);
+        return Ok(());
     }
 
     let team_name = team_data["name"].as_str().unwrap_or("");
@@ -154,7 +160,7 @@ async fn list_cycles(team: &str, include_all: bool) -> Result<()> {
     Ok(())
 }
 
-async fn current_cycle(team: &str) -> Result<()> {
+async fn current_cycle(team: &str, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     // Resolve team key/name to UUID
@@ -192,6 +198,11 @@ async fn current_cycle(team: &str) -> Result<()> {
 
     if team_data.is_null() {
         anyhow::bail!("Team not found: {}", team);
+    }
+
+    if matches!(output, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&team_data)?);
+        return Ok(());
     }
 
     let team_name = team_data["name"].as_str().unwrap_or("");

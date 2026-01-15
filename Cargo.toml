@@ -1,6 +1,6 @@
 [package]
 name = "linear-cli"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "A powerful CLI for Linear.app - manage issues, projects, cycles, and more from your terminal"
 authors = ["scwrcd"]
@@ -32,3 +32,4 @@ console = "0.15"
 futures = "0.3"
 indicatif = "0.17"
 chrono = { version = "0.4", features = ["serde"] }
+regex = "1"

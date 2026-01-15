@@ -6,6 +6,7 @@ use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
+use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum StatusCommands {
@@ -40,14 +41,14 @@ struct StatusRow {
     id: String,
 }
 
-pub async fn handle(cmd: StatusCommands) -> Result<()> {
+pub async fn handle(cmd: StatusCommands, output: OutputFormat) -> Result<()> {
     match cmd {
-        StatusCommands::List { team } => list_statuses(&team).await,
-        StatusCommands::Get { id, team } => get_status(&id, &team).await,
+        StatusCommands::List { team } => list_statuses(&team, output).await,
+        StatusCommands::Get { id, team } => get_status(&id, &team, output).await,
     }
 }
 
-async fn list_statuses(team: &str) -> Result<()> {
+async fn list_statuses(team: &str, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
     let cache = Cache::new()?;
 
@@ -107,7 +108,19 @@ async fn list_statuses(team: &str) -> Result<()> {
         };
 
     if states.is_empty() {
+        if output == OutputFormat::Json {
+            println!("{}", json!({"statuses": [], "team": team_name}));
+            return Ok(());
+        }
         println!("No statuses found for team '{}'.", team_name);
+        return Ok(());
+    }
+
+    if output == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&json!({
+            "team": team_name,
+            "statuses": states
+        }))?);
         return Ok(());
     }
 
@@ -150,7 +163,7 @@ async fn list_statuses(team: &str) -> Result<()> {
     Ok(())
 }
 
-async fn get_status(id: &str, team: &str) -> Result<()> {
+async fn get_status(id: &str, team: &str, output: OutputFormat) -> Result<()> {
     let client = LinearClient::new()?;
 
     // Resolve team key/name to UUID
@@ -196,6 +209,11 @@ async fn get_status(id: &str, team: &str) -> Result<()> {
 
     match status {
         Some(s) => {
+            if output == OutputFormat::Json {
+                println!("{}", serde_json::to_string_pretty(s)?);
+                return Ok(());
+            }
+
             println!("{}", s["name"].as_str().unwrap_or("").bold());
             println!("{}", "-".repeat(40));
             println!("Type: {}", s["type"].as_str().unwrap_or("-"));

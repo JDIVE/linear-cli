@@ -7,6 +7,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::api::{resolve_team_id, LinearClient};
+use crate::cache::{Cache, CacheType};
+use crate::OutputFormat;
 
 /// Get default directory to scan for local projects (cross-platform)
 fn get_default_code_dir() -> String {
@@ -83,12 +85,12 @@ enum SyncStatus {
     RemoteOnly(LinearProject),
 }
 
-pub async fn handle(cmd: SyncCommands) -> Result<()> {
+pub async fn handle(cmd: SyncCommands, output: OutputFormat) -> Result<()> {
     match cmd {
         SyncCommands::Status {
             directory,
             missing_only,
-        } => status_command(directory, missing_only).await,
+        } => status_command(directory, missing_only, output).await,
         SyncCommands::Push {
             directory,
             team,
@@ -144,8 +146,27 @@ fn scan_local_projects(dir: &str) -> Result<Vec<LocalProject>> {
     Ok(projects)
 }
 
-/// Fetch all Linear projects
+/// Fetch all Linear projects (with caching)
 async fn fetch_linear_projects(client: &LinearClient) -> Result<Vec<LinearProject>> {
+    // Try cache first
+    if let Ok(cache) = Cache::new() {
+        if let Some(cached_data) = cache.get(CacheType::Projects) {
+            let projects = cached_data["nodes"]
+                .as_array()
+                .or_else(|| cached_data.as_array())
+                .unwrap_or(&vec![])
+                .iter()
+                .map(|p| LinearProject {
+                    id: p["id"].as_str().unwrap_or("").to_string(),
+                    name: p["name"].as_str().unwrap_or("").to_string(),
+                    url: p["url"].as_str().map(|s| s.to_string()),
+                })
+                .collect();
+            return Ok(projects);
+        }
+    }
+
+    // Fetch from API
     let query = r#"
         query {
             projects(first: 250) {
@@ -160,7 +181,14 @@ async fn fetch_linear_projects(client: &LinearClient) -> Result<Vec<LinearProjec
 
     let result = client.query(query, None).await?;
 
-    let projects = result["data"]["projects"]["nodes"]
+    let projects_data = &result["data"]["projects"];
+
+    // Cache the result
+    if let Ok(cache) = Cache::new() {
+        let _ = cache.set(CacheType::Projects, projects_data.clone());
+    }
+
+    let projects = projects_data["nodes"]
         .as_array()
         .unwrap_or(&vec![])
         .iter()
@@ -210,23 +238,19 @@ fn compare_projects(local: Vec<LocalProject>, remote: Vec<LinearProject>) -> Vec
 }
 
 /// Display sync status
-async fn status_command(directory: Option<String>, missing_only: bool) -> Result<()> {
+async fn status_command(directory: Option<String>, missing_only: bool, output: OutputFormat) -> Result<()> {
     let dir = directory.unwrap_or_else(get_default_code_dir);
-
-    println!("{}", "Sync Status".bold());
-    println!("{}", "─".repeat(60));
-    println!("Scanning: {}", dir.cyan());
-    println!();
-
-    // Scan local projects
-    let local_projects = scan_local_projects(&dir)?;
-    println!("Found {} local folders", local_projects.len());
-
-    // Fetch Linear projects
     let client = LinearClient::new()?;
-    let linear_projects = fetch_linear_projects(&client).await?;
-    println!("Found {} Linear projects", linear_projects.len());
-    println!();
+
+    // Run local scan and API fetch in parallel
+    let dir_clone = dir.clone();
+    let (local_result, linear_result) = tokio::join!(
+        tokio::task::spawn_blocking(move || scan_local_projects(&dir_clone)),
+        fetch_linear_projects(&client)
+    );
+
+    let local_projects = local_result??;
+    let linear_projects = linear_result?;
 
     // Compare
     let statuses = compare_projects(local_projects, linear_projects);
@@ -244,6 +268,71 @@ async fn status_command(directory: Option<String>, missing_only: bool) -> Result
         .iter()
         .filter(|s| matches!(s, SyncStatus::RemoteOnly(_)))
         .count();
+
+    // JSON output
+    if output == OutputFormat::Json {
+        let synced: Vec<_> = statuses
+            .iter()
+            .filter_map(|s| match s {
+                SyncStatus::Synced { local, remote } => Some(json!({
+                    "name": local.name,
+                    "path": local.path,
+                    "has_git": local.has_git,
+                    "linear_id": remote.id,
+                    "linear_url": remote.url,
+                })),
+                _ => None,
+            })
+            .collect();
+
+        let local_only: Vec<_> = statuses
+            .iter()
+            .filter_map(|s| match s {
+                SyncStatus::LocalOnly(local) => Some(json!({
+                    "name": local.name,
+                    "path": local.path,
+                    "has_git": local.has_git,
+                })),
+                _ => None,
+            })
+            .collect();
+
+        let remote_only: Vec<_> = statuses
+            .iter()
+            .filter_map(|s| match s {
+                SyncStatus::RemoteOnly(remote) => Some(json!({
+                    "id": remote.id,
+                    "name": remote.name,
+                    "url": remote.url,
+                })),
+                _ => None,
+            })
+            .collect();
+
+        let output_json = json!({
+            "directory": dir,
+            "synced": synced,
+            "local_only": local_only,
+            "remote_only": remote_only,
+            "summary": {
+                "synced_count": synced_count,
+                "local_only_count": local_only_count,
+                "remote_only_count": remote_only_count,
+            }
+        });
+
+        println!("{}", serde_json::to_string_pretty(&output_json)?);
+        return Ok(());
+    }
+
+    println!("{}", "Sync Status".bold());
+    println!("{}", "─".repeat(60));
+    println!("Scanning: {}", dir.cyan());
+    println!();
+
+    println!("Found {} local folders", statuses.iter().filter(|s| !matches!(s, SyncStatus::RemoteOnly(_))).count());
+    println!("Found {} Linear projects", statuses.iter().filter(|s| !matches!(s, SyncStatus::LocalOnly(_))).count());
+    println!();
 
     // Display results
     if !missing_only {
@@ -374,11 +463,15 @@ async fn push_command(
     println!("Team: {}", team.cyan());
     println!();
 
-    // Scan local projects
-    let local_projects = scan_local_projects(&dir)?;
+    // Run local scan and API fetch in parallel
+    let dir_clone = dir.clone();
+    let (local_result, linear_result) = tokio::join!(
+        tokio::task::spawn_blocking(move || scan_local_projects(&dir_clone)),
+        fetch_linear_projects(&client)
+    );
 
-    // Fetch Linear projects
-    let linear_projects = fetch_linear_projects(&client).await?;
+    let local_projects = local_result??;
+    let linear_projects = linear_result?;
 
     // Compare to find missing
     let statuses = compare_projects(local_projects, linear_projects);

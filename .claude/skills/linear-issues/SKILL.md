@@ -32,6 +32,9 @@ linear-cli i get LIN-123
 
 # Get as JSON
 linear-cli i get LIN-123 --output json
+
+# Batch fetch multiple issues
+linear-cli i get LIN-1 LIN-2 LIN-3 --output json
 ```
 
 ## Create Issues
@@ -42,6 +45,15 @@ linear-cli i create "Bug: Login fails" -t Engineering -p 2
 
 # Create with status
 linear-cli i create "Feature request" -t ENG -s "Backlog"
+
+# Preview without creating (dry run)
+linear-cli i create "Test issue" -t ENG --dry-run
+
+# Get just the created ID (for chaining)
+linear-cli i create "Bug fix" -t ENG --id-only
+
+# Read description from stdin
+cat description.md | linear-cli i create "Title" -t ENG -d -
 ```
 
 ## Update Issues
@@ -52,6 +64,9 @@ linear-cli i update LIN-123 -s Done
 
 # Update priority
 linear-cli i update LIN-123 -p 1
+
+# Get just the ID on success
+linear-cli i update LIN-123 -s Done --id-only
 ```
 
 ## Start/Stop Work
@@ -77,8 +92,33 @@ linear-cli cm list LIN-123 --output json
 linear-cli cm create LIN-123 -b "Fixed in latest commit"
 ```
 
+## Context Detection
+
+```bash
+# Get current issue from git branch name
+linear-cli context
+
+# Get with full issue details as JSON
+linear-cli context --output json
+```
+
+## Agent-Friendly Options
+
+| Flag | Purpose |
+|------|---------|
+| `--output json` | Machine-readable JSON output |
+| `--quiet` / `-q` | Suppress decorative output |
+| `--id-only` | Only output created/updated ID |
+| `--dry-run` | Preview without executing |
+
+## Exit Codes
+- `0` = Success
+- `1` = General error
+- `2` = Not found
+- `3` = Auth error
+
 ## Tips
 
 - Use `--output json` for machine-readable output
-- Short alias: `i` for issues, `cm` for comments
+- Short alias: `i` for issues, `cm` for comments, `ctx` for context
 - Run `linear-cli i --help` for all options
