@@ -444,6 +444,25 @@ For Linear.app operations, always use the linear-cli command-line tool:
 Do NOT use Linear MCP server - CLI is more token-efficient.
 ```
 
+#### OpenAI Codex (AGENTS.md)
+
+Create or append to `AGENTS.md` in your repository root:
+
+```markdown
+## Linear Integration
+
+Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
+
+### Commands:
+- `linear-cli i list` - List issues
+- `linear-cli i create "Title" -t TEAM` - Create issue
+- `linear-cli i get LIN-123` - View issue details
+- `linear-cli i update LIN-123 -s Done` - Update status
+- `linear-cli g pr LIN-123` - Create GitHub PR
+- `linear-cli cm list ISSUE_ID --output json` - Get comments as JSON
+- `linear-cli up fetch URL -o file.png` - Download attachments
+```
+
 #### Generic Agent Instructions
 
 ```
