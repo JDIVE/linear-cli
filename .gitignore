@@ -2,3 +2,4 @@
 
 # Claude Code local settings (not skills)
 .claude/settings.local.json
+tmpclaude-*
