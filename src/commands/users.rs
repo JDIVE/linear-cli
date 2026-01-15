@@ -42,7 +42,34 @@ async fn list_users(team: Option<String>, output: OutputFormat) -> Result<()> {
     let cache = Cache::new()?;
 
     // Only use cache for full user list (no team filter)
-    let users: Vec<Value> = if team.is_none() {
+    let users: Vec<Value> = if let Some(ref team_key) = team {
+        // Team-filtered users - always fetch from API (not cached)
+        let client = LinearClient::new()?;
+        let team_id = resolve_team_id(&client, team_key).await?;
+
+        let query = r#"
+            query($teamId: String!) {
+                team(id: $teamId) {
+                    members {
+                        nodes {
+                            id
+                            name
+                            email
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let result = client
+            .query(query, Some(json!({ "teamId": team_id })))
+            .await?;
+
+        result["data"]["team"]["members"]["nodes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    } else {
         // Try cache first
         if let Some(cached) = cache.get(CacheType::Users) {
             cached.as_array().cloned().unwrap_or_default()
@@ -68,33 +95,6 @@ async fn list_users(team: Option<String>, output: OutputFormat) -> Result<()> {
             let _ = cache.set(CacheType::Users, data.clone());
             data.as_array().cloned().unwrap_or_default()
         }
-    } else {
-        // Team-filtered users - always fetch from API (not cached)
-        let client = LinearClient::new()?;
-        let team_id = resolve_team_id(&client, team.as_ref().unwrap()).await?;
-
-        let query = r#"
-            query($teamId: String!) {
-                team(id: $teamId) {
-                    members {
-                        nodes {
-                            id
-                            name
-                            email
-                        }
-                    }
-                }
-            }
-        "#;
-
-        let result = client
-            .query(query, Some(json!({ "teamId": team_id })))
-            .await?;
-
-        result["data"]["team"]["members"]["nodes"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
     };
 
     if matches!(output, OutputFormat::Json) {

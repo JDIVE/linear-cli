@@ -192,7 +192,7 @@ pub async fn handle(
                 stdin
                     .lock()
                     .lines()
-                    .filter_map(|l| l.ok())
+                    .map_while(Result::ok)
                     .filter(|l| !l.trim().is_empty())
                     .map(|l| l.trim().to_string())
                     .collect()
@@ -249,7 +249,7 @@ pub async fn handle(
             let final_description = match description.as_deref() {
                 Some("-") => {
                     let stdin = io::stdin();
-                    let lines: Vec<String> = stdin.lock().lines().filter_map(|l| l.ok()).collect();
+                    let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
                     Some(lines.join("\n"))
                 }
                 Some(d) => Some(d.to_string()),
@@ -287,7 +287,7 @@ pub async fn handle(
             let final_description = match description.as_deref() {
                 Some("-") => {
                     let stdin = io::stdin();
-                    let lines: Vec<String> = stdin.lock().lines().filter_map(|l| l.ok()).collect();
+                    let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
                     Some(lines.join("\n"))
                 }
                 Some(d) => Some(d.to_string()),
@@ -326,6 +326,7 @@ fn priority_to_string(priority: Option<i64>) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list_issues(
     team: Option<String>,
     state: Option<String>,
@@ -767,6 +768,7 @@ async fn create_issue(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_issue(
     id: &str,
     title: Option<String>,
