@@ -12,4 +12,11 @@ Commands that produce these shapes:
 - `linear-cli cm list ISSUE_ID --output json`
 - `linear-cli context --output json`
 
-Errors are returned as a JSON object with `error: true`.
+Schema version:
+- `1.0` (see `docs/json/schema.json`)
+
+Notes:
+- Use `--output ndjson` for streaming lists (one JSON object per line).
+- Use `--fields`, `--sort`, and `--filter` to shape outputs.
+- Use `--schema` to print the current schema version.
+- Errors are returned as a JSON object with `error: true`, optional `details`, and `retry_after`.

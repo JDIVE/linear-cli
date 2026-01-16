@@ -12,8 +12,11 @@ A fast, powerful command-line interface for [Linear](https://linear.app) built w
 - **jj (Jujutsu) Support** - First-class support for Jujutsu VCS alongside Git
 - **Interactive Mode** - TUI for browsing and managing issues
 - **Multiple Workspaces** - Switch between Linear workspaces seamlessly
+- **Profiles & Auth** - Named profiles with `auth login/logout/status`
 - **Bulk Operations** - Perform actions on multiple issues at once
-- **JSON Output** - Machine-readable output for scripting and AI agents
+- **JSON/NDJSON Output** - Machine-readable output for scripting and agents
+- **Pagination & Filters** - `--limit`, `--page-size`, `--all`, `--filter`
+- **Diagnostics** - `doctor` command for config and connectivity checks
 - **Fast** - Native Rust binary, no runtime dependencies
 
 ## Installation
@@ -64,6 +67,9 @@ linear-cli g pr LIN-123
 | `config` | - | CLI configuration |
 | `common` | `tasks` | Common tasks and examples |
 | `agent` | - | Agent-focused capabilities and examples |
+| `auth` | - | API key management and status |
+| `doctor` | - | Diagnose config and connectivity |
+| `cache` | `ca` | Cache inspection and clearing |
 
 Run `linear-cli <command> --help` for detailed usage.
 
@@ -82,7 +88,23 @@ linear-cli g pr LIN-123 --draft            # Create draft PR
 # Search
 linear-cli s issues "auth bug"             # Search issues
 
-# JSON output (great for AI agents)\nlinear-cli i get LIN-123 --output json\nlinear-cli cm list ISSUE_ID --output json\n\n# Disable color for logs/CI\nlinear-cli i list --no-color
+# JSON output (great for AI agents)
+linear-cli i get LIN-123 --output json
+linear-cli cm list ISSUE_ID --output ndjson
+
+# Pagination + filters
+linear-cli i list --limit 25 --sort identifier
+linear-cli i list --all --page-size 100 --filter state.name=In\ Progress
+
+# Template output
+linear-cli i list --format "{{identifier}} {{title}}"
+
+# Profiles
+linear-cli --profile work auth login
+linear-cli --profile work i list
+
+# Disable color for logs/CI
+linear-cli i list --no-color
 ```
 
 See [docs/examples.md](docs/examples.md) for comprehensive examples.
@@ -93,8 +115,14 @@ See [docs/examples.md](docs/examples.md) for comprehensive examples.
 # Set API key
 linear-cli config set-key YOUR_API_KEY
 
+# Or use auth login
+linear-cli auth login
+
 # Or use environment variable
 export LINEAR_API_KEY=lin_api_xxx
+
+# Override profile per invocation
+export LINEAR_CLI_PROFILE=work
 ```
 
 Config stored at `~/.config/linear-cli/config.toml` (Linux/macOS) or `%APPDATA%\linear-cli\config.toml` (Windows).
@@ -106,6 +134,7 @@ Config stored at `~/.config/linear-cli/config.toml` (Linux/macOS) or `%APPDATA%\
 - [AI Agent Integration](docs/ai-agents.md) - Setup for Claude Code, Cursor, OpenAI Codex
 - [Agent Skills](docs/skills.md) - Pre-built skills for Claude Code and OpenAI Codex
 - [JSON Samples](docs/json/README.md) - Example JSON output shapes
+- [JSON Schema](docs/json/schema.json) - Schema version reference
 - [Shell Completions](docs/shell-completions.md) - Tab completion setup
 
 ## Comparison with Other CLIs

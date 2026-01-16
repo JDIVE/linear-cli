@@ -2,6 +2,6 @@
   "error": true,
   "message": "Issue not found: LIN-999",
   "code": 2,
-  "details": { "status": 404, "reason": "Not Found" },
+  "details": { "status": 404, "reason": "Not Found", "request_id": null },
   "retry_after": null
 }

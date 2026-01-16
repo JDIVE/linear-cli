@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Linear CLI JSON Outputs",
+  "description": "Schema version 1.0. Samples live in docs/json/*.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}
