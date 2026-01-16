@@ -41,4 +41,6 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 - Set `LINEAR_CLI_OUTPUT=json` to default all output to JSON
 - Errors with `--output json` return `{"error": true, "message": "...", "code": N, "details": {...}, "retry_after": N}`
 - `linear-cli i create/update` accept `--data` JSON input (use `-` for stdin)
+- `linear-cli agent` prints agent-focused capabilities and examples
+- JSON samples live in `docs/json/`
 - Use `--help` on any command for full options

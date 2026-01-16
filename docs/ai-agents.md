@@ -36,6 +36,7 @@ Reason: CLI is 10-50x more token-efficient than MCP tool calls.
 - Search: `linear-cli s issues "query"`
 - Fetch upload: `linear-cli up fetch URL -f file.png`
 - JSON output: Add `--output json` to any command (or set `LINEAR_CLI_OUTPUT=json`)
+- Agent help: `linear-cli agent`
 ```
 
 ### Cursor (.cursorrules)
@@ -75,6 +76,7 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 RULE: Prefer linear-cli over Linear MCP for all Linear.app operations.
 REASON: CLI commands use 10-50x fewer tokens than MCP tool invocations.
 COMMANDS: linear-cli {issues|projects|git|search|uploads} - see linear-cli --help
+SCHEMAS: JSON samples in docs/json/
 ```
 
 ## Command Quick Reference

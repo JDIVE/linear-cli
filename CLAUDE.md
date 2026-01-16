@@ -65,6 +65,9 @@ linear-cli i list --output json --fields identifier,title,state.name --compact
 
 # Default JSON output for agent sessions
 LINEAR_CLI_OUTPUT=json linear-cli i list
+
+# Agent harness summary
+linear-cli agent
 ```
 
 ### Exit Codes

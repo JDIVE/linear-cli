@@ -5,6 +5,7 @@
 ```bash
 linear-cli common
 linear-cli tasks
+linear-cli agent
 ```
 
 ## Projects
@@ -15,6 +16,7 @@ linear-cli p list --archived                   # Include archived
 linear-cli p get PROJECT_ID                    # View project details
 linear-cli p create "Q1 Roadmap" -t Engineering
 linear-cli p update PROJECT_ID --name "New Name"
+linear-cli p update PROJECT_ID --name "New Name" --dry-run
 linear-cli p delete PROJECT_ID --force
 linear-cli p add-labels PROJECT_ID LABEL_ID
 ```
@@ -30,6 +32,7 @@ linear-cli i get LIN-123 --output json         # JSON output
 linear-cli i create "Bug fix" -t Eng -p 1      # Priority: 1=urgent, 4=low
 cat issue.json | linear-cli i create "Bug fix" -t Eng --data -
 linear-cli i update LIN-123 -s Done
+linear-cli i update LIN-123 -s Done --dry-run
 linear-cli i delete LIN-123 --force
 linear-cli i start LIN-123                     # Start working: assigns to you, sets In Progress, creates branch
 linear-cli i stop LIN-123                      # Stop working: unassigns, resets status
@@ -120,6 +123,13 @@ linear-cli cm create ISSUE_ID -b "This is a comment"
 linear-cli d list
 linear-cli d get DOC_ID
 linear-cli d create "Doc Title" -p PROJECT_ID
+linear-cli d update DOC_ID --title "New title" --dry-run
+linear-cli d list --output json
+
+# Templates
+linear-cli tpl list
+linear-cli tpl list --output json
+linear-cli tpl show bug --output json
 
 # Statuses
 linear-cli st list -t Engineering

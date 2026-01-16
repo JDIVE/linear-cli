@@ -63,6 +63,7 @@ linear-cli g pr LIN-123
 | `interactive` | `ui` | Interactive TUI mode |
 | `config` | - | CLI configuration |
 | `common` | `tasks` | Common tasks and examples |
+| `agent` | - | Agent-focused capabilities and examples |
 
 Run `linear-cli <command> --help` for detailed usage.
 
@@ -104,6 +105,7 @@ Config stored at `~/.config/linear-cli/config.toml` (Linux/macOS) or `%APPDATA%\
 - [Workflows](docs/workflows.md) - Common workflow patterns
 - [AI Agent Integration](docs/ai-agents.md) - Setup for Claude Code, Cursor, OpenAI Codex
 - [Agent Skills](docs/skills.md) - Pre-built skills for Claude Code and OpenAI Codex
+- [JSON Samples](docs/json/README.md) - Example JSON output shapes
 - [Shell Completions](docs/shell-completions.md) - Tab completion setup
 
 ## Comparison with Other CLIs
