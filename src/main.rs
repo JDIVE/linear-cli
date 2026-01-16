@@ -64,6 +64,8 @@ COMMON FLAGS:
     --output table|json           Output format (default: table)
     --color auto|always|never     Color output control
     --no-color                    Disable color output
+    --width N                     Max table column width
+    --no-truncate                 Disable table truncation
     --quiet                       Reduce decorative output
 
 For more info on a command, run: linear <command> --help"#)]
@@ -164,6 +166,8 @@ enum Commands {
     /// Show common tasks and examples
     #[command(alias = "tasks")]
     Common,
+    /// Show agent-focused capabilities and examples
+    Agent,
     /// Manage projects - list, create, update, delete projects
     #[command(alias = "p")]
     #[command(after_help = r#"EXAMPLES:
@@ -548,6 +552,23 @@ async fn run_command(
             println!("  Use --output json for scripting/LLMs.");
             println!("  Use --no-color for logs/CI.");
         }
+        Commands::Agent => {
+            println!("Agent harness:");
+            println!("  Use --output json for machine-readable output.");
+            println!("  Use --compact and --fields to reduce tokens.");
+            println!("  Use --sort/--order to stabilize list outputs.");
+            println!("  Use --id-only for chaining create/update commands.");
+            println!("  Use --data - for JSON input on issue create/update.");
+            println!();
+            println!("Examples:");
+            println!("  linear issues list --output json --compact --fields identifier,title");
+            println!("  linear issues get LIN-123 --output json");
+            println!("  linear issues update LIN-123 --data - --dry-run");
+            println!("  linear context --output json --id-only");
+            println!();
+            println!("Schemas:");
+            println!("  See docs/json/ for sample outputs.");
+        }
         Commands::Projects { action } => projects::handle(action, output).await?,
         Commands::Issues { action } => issues::handle(action, output, agent_opts).await?,
         Commands::Labels { action } => labels::handle(action, output).await?,
@@ -555,7 +576,7 @@ async fn run_command(
         Commands::Users { action } => users::handle(action, output).await?,
         Commands::Cycles { action } => cycles::handle(action, output).await?,
         Commands::Comments { action } => comments::handle(action, output).await?,
-        Commands::Documents { action } => documents::handle(action).await?,
+        Commands::Documents { action } => documents::handle(action, output).await?,
         Commands::Search { action } => search::handle(action, output).await?,
         Commands::Sync { action } => sync::handle(action, output).await?,
         Commands::Statuses { action } => statuses::handle(action, output).await?,
@@ -563,11 +584,11 @@ async fn run_command(
         Commands::Bulk { action } => bulk::handle(action, output).await?,
         Commands::Cache { action } => commands::cache::handle(action).await?,
         Commands::Notifications { action } => notifications::handle(action, output).await?,
-        Commands::Templates { action } => templates::handle(action).await?,
+        Commands::Templates { action } => templates::handle(action, output).await?,
         Commands::Time { action } => time::handle(action, output).await?,
         Commands::Uploads { action } => uploads::handle(action).await?,
         Commands::Interactive { team } => interactive::run(team).await?,
-        Commands::Context => handle_context(output).await?,
+        Commands::Context => handle_context(output, agent_opts).await?,
         Commands::Config { action } => match action {
             ConfigCommands::SetKey { key } => {
                 config::set_api_key(&key)?;
@@ -604,7 +625,7 @@ async fn run_command(
 }
 
 /// Handle the context command - detect current Linear issue from git branch
-async fn handle_context(output: &OutputOptions) -> Result<()> {
+async fn handle_context(output: &OutputOptions, agent_opts: AgentOptions) -> Result<()> {
     // Get current git branch
     let branch_output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -628,6 +649,10 @@ async fn handle_context(output: &OutputOptions) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No Linear issue ID found in branch: {}", branch))?;
 
     if output.is_json() {
+        if agent_opts.id_only {
+            print_json(&serde_json::json!(issue_id), &output.json)?;
+            return Ok(());
+        }
         // Fetch issue details for JSON output
         let client = api::LinearClient::new()?;
         let query = r#"
