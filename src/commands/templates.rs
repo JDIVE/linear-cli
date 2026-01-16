@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tabled::{Table, Tabled};
 
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::text::truncate;
 /// Issue template structure for creating issues with predefined values
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -138,6 +138,7 @@ fn list_templates(output: &OutputOptions) -> Result<()> {
     let store = load_templates()?;
 
     if store.templates.is_empty() {
+        ensure_non_empty(&[], output)?;
         println!("No templates found.");
         println!("\nCreate one with: linear-cli templates create <name>");
         return Ok(());
@@ -145,6 +146,8 @@ fn list_templates(output: &OutputOptions) -> Result<()> {
 
     let mut templates: Vec<serde_json::Value> =
         store.templates.values().map(|t| json!(t)).collect();
+
+    filter_values(&mut templates, &output.filters);
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut templates, sort_key, output.json.order);
@@ -157,8 +160,14 @@ fn list_templates(output: &OutputOptions) -> Result<()> {
         });
     }
 
-    if output.is_json() {
-        print_json(&serde_json::json!(templates), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(templates), output)?;
+        return Ok(());
+    }
+
+    ensure_non_empty(&templates, output)?;
+    if templates.is_empty() {
+        println!("No templates found.");
         return Ok(());
     }
 
@@ -275,8 +284,8 @@ fn create_template(name: &str, output: &OutputOptions) -> Result<()> {
     store.templates.insert(name.to_string(), template);
     save_templates(&store)?;
 
-    if output.is_json() {
-        print_json(&json!(store.templates.get(name)), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&json!(store.templates.get(name)), output)?;
         return Ok(());
     }
 
@@ -293,8 +302,8 @@ fn show_template(name: &str, output: &OutputOptions) -> Result<()> {
         .get(name)
         .ok_or_else(|| anyhow::anyhow!("Template not found"))?;
 
-    if output.is_json() {
-        print_json(&json!(template), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&json!(template), output)?;
         return Ok(());
     }
 
@@ -347,8 +356,8 @@ fn delete_template(name: &str, force: bool, output: &OutputOptions) -> Result<()
     store.templates.remove(name);
     save_templates(&store)?;
 
-    if output.is_json() {
-        print_json(&json!({ "deleted": name }), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&json!({ "deleted": name }), output)?;
         return Ok(());
     }
 

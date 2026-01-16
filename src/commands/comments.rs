@@ -7,7 +7,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -74,24 +75,27 @@ async fn list_comments(issue_ids: &[String], output: &OutputOptions) -> Result<(
     }
 
     let client = LinearClient::new()?;
+    let pagination = output.pagination.with_default_limit(100);
     let mut issues = Vec::new();
     for id in &final_ids {
-        let issue = fetch_issue_comments(&client, id).await?;
+        let mut issue = fetch_issue_meta(&client, id).await?;
         if issue.is_null() {
-            if !output.is_json() {
+            if !output.is_json() && !output.has_template() {
                 eprintln!("{} Issue not found: {}", "!".yellow(), id);
             }
             continue;
         }
+        let comments = fetch_issue_comments(&client, id, &pagination).await?;
+        issue["comments"] = json!({ "nodes": comments });
         issues.push(issue);
     }
 
     // JSON output - return raw data for LLM consumption
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         if issues.len() == 1 {
-            print_json(&issues[0], &output.json)?;
+            print_json(&issues[0], output)?;
         } else {
-            print_json(&serde_json::json!(issues), &output.json)?;
+            print_json(&serde_json::json!(issues), output)?;
         }
         return Ok(());
     }
@@ -111,10 +115,13 @@ async fn list_comments(issue_ids: &[String], output: &OutputOptions) -> Result<(
             .cloned()
             .unwrap_or_default();
 
+        filter_values(&mut comments, &output.filters);
+
         if let Some(sort_key) = output.json.sort.as_deref() {
             sort_values(&mut comments, sort_key, output.json.order);
         }
 
+        ensure_non_empty(&comments, output)?;
         if comments.is_empty() {
             println!("No comments found for this issue.");
             continue;
@@ -152,22 +159,13 @@ async fn list_comments(issue_ids: &[String], output: &OutputOptions) -> Result<(
     Ok(())
 }
 
-async fn fetch_issue_comments(client: &LinearClient, issue_id: &str) -> Result<serde_json::Value> {
+async fn fetch_issue_meta(client: &LinearClient, issue_id: &str) -> Result<serde_json::Value> {
     let query = r#"
         query($issueId: String!) {
             issue(id: $issueId) {
                 id
                 identifier
                 title
-                comments {
-                    nodes {
-                        id
-                        body
-                        createdAt
-                        user { name email }
-                        parent { id }
-                    }
-                }
             }
         }
     "#;
@@ -176,6 +174,48 @@ async fn fetch_issue_comments(client: &LinearClient, issue_id: &str) -> Result<s
         .query(query, Some(json!({ "issueId": issue_id })))
         .await?;
     Ok(result["data"]["issue"].clone())
+}
+
+async fn fetch_issue_comments(
+    client: &LinearClient,
+    issue_id: &str,
+    pagination: &crate::pagination::PaginationOptions,
+) -> Result<Vec<serde_json::Value>> {
+    let query = r#"
+        query($issueId: String!, $first: Int, $after: String, $last: Int, $before: String) {
+            issue(id: $issueId) {
+                comments(first: $first, after: $after, last: $last, before: $before) {
+                    nodes {
+                        id
+                        body
+                        createdAt
+                        user { name email }
+                        parent { id }
+                    }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
+                }
+            }
+        }
+    "#;
+
+    let mut vars = serde_json::Map::new();
+    vars.insert("issueId".to_string(), json!(issue_id));
+
+    paginate_nodes(
+        client,
+        query,
+        vars,
+        &["data", "issue", "comments", "nodes"],
+        &["data", "issue", "comments", "pageInfo"],
+        pagination,
+        100,
+    )
+    .await
 }
 
 async fn create_comment(issue_id: &str, body: &str, parent_id: Option<String>) -> Result<()> {

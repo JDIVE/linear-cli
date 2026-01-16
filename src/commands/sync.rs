@@ -98,7 +98,10 @@ pub async fn handle(cmd: SyncCommands, output: &OutputOptions) -> Result<()> {
             team,
             only,
             dry_run,
-        } => push_command(directory, team, only, dry_run).await,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            push_command(directory, team, only, dry_run, &output.cache).await
+        }
     }
 }
 
@@ -149,22 +152,27 @@ fn scan_local_projects(dir: &str) -> Result<Vec<LocalProject>> {
 }
 
 /// Fetch all Linear projects (with caching)
-async fn fetch_linear_projects(client: &LinearClient) -> Result<Vec<LinearProject>> {
+async fn fetch_linear_projects(
+    client: &LinearClient,
+    cache_opts: &crate::cache::CacheOptions,
+) -> Result<Vec<LinearProject>> {
     // Try cache first
-    if let Ok(cache) = Cache::new() {
-        if let Some(cached_data) = cache.get(CacheType::Projects) {
-            let projects = cached_data["nodes"]
-                .as_array()
-                .or_else(|| cached_data.as_array())
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|p| LinearProject {
-                    id: p["id"].as_str().unwrap_or("").to_string(),
-                    name: p["name"].as_str().unwrap_or("").to_string(),
-                    url: p["url"].as_str().map(|s| s.to_string()),
-                })
-                .collect();
-            return Ok(projects);
+    if !cache_opts.no_cache {
+        if let Ok(cache) = Cache::with_ttl(cache_opts.effective_ttl_seconds()) {
+            if let Some(cached_data) = cache.get(CacheType::Projects) {
+                let projects = cached_data["nodes"]
+                    .as_array()
+                    .or_else(|| cached_data.as_array())
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .map(|p| LinearProject {
+                        id: p["id"].as_str().unwrap_or("").to_string(),
+                        name: p["name"].as_str().unwrap_or("").to_string(),
+                        url: p["url"].as_str().map(|s| s.to_string()),
+                    })
+                    .collect();
+                return Ok(projects);
+            }
         }
     }
 
@@ -186,8 +194,10 @@ async fn fetch_linear_projects(client: &LinearClient) -> Result<Vec<LinearProjec
     let projects_data = &result["data"]["projects"];
 
     // Cache the result
-    if let Ok(cache) = Cache::new() {
-        let _ = cache.set(CacheType::Projects, projects_data.clone());
+    if !cache_opts.no_cache {
+        if let Ok(cache) = Cache::with_ttl(cache_opts.effective_ttl_seconds()) {
+            let _ = cache.set(CacheType::Projects, projects_data.clone());
+        }
     }
 
     let projects = projects_data["nodes"]
@@ -203,6 +213,7 @@ async fn fetch_linear_projects(client: &LinearClient) -> Result<Vec<LinearProjec
 
     Ok(projects)
 }
+
 
 /// Compare local projects with Linear projects
 fn compare_projects(local: Vec<LocalProject>, remote: Vec<LinearProject>) -> Vec<SyncStatus> {
@@ -276,7 +287,7 @@ async fn status_command(
     let dir_clone = dir.clone();
     let (local_result, linear_result) = tokio::join!(
         tokio::task::spawn_blocking(move || scan_local_projects(&dir_clone)),
-        fetch_linear_projects(&client)
+        fetch_linear_projects(&client, &output.cache)
     );
 
     let local_projects = local_result??;
@@ -312,7 +323,7 @@ async fn status_command(
         .count();
 
     // JSON output
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let synced: Vec<_> = statuses
             .iter()
             .filter_map(|s| match s {
@@ -363,7 +374,7 @@ async fn status_command(
             }
         });
 
-        print_json(&output_json, &output.json)?;
+        print_json(&output_json, output)?;
         return Ok(());
     }
 
@@ -493,6 +504,7 @@ async fn push_command(
     team: String,
     only: Option<String>,
     dry_run: bool,
+    cache_opts: &crate::cache::CacheOptions,
 ) -> Result<()> {
     let dir = directory.unwrap_or_else(get_default_code_dir);
 
@@ -520,7 +532,7 @@ async fn push_command(
     let dir_clone = dir.clone();
     let (local_result, linear_result) = tokio::join!(
         tokio::task::spawn_blocking(move || scan_local_projects(&dir_clone)),
-        fetch_linear_projects(&client)
+        fetch_linear_projects(&client, cache_opts)
     );
 
     let local_projects = local_result??;

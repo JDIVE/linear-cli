@@ -5,7 +5,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -14,9 +15,6 @@ pub enum SearchCommands {
     Issues {
         /// Search query string
         query: String,
-        /// Maximum number of results
-        #[arg(short, long, default_value = "50")]
-        limit: u32,
         /// Include archived issues
         #[arg(short, long)]
         archived: bool,
@@ -25,9 +23,6 @@ pub enum SearchCommands {
     Projects {
         /// Search query string
         query: String,
-        /// Maximum number of results
-        #[arg(short, long, default_value = "50")]
-        limit: u32,
         /// Include archived projects
         #[arg(short, long)]
         archived: bool,
@@ -62,30 +57,19 @@ struct ProjectRow {
 
 pub async fn handle(cmd: SearchCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
-        SearchCommands::Issues {
-            query,
-            limit,
-            archived,
-        } => search_issues(&query, limit, archived, output).await,
-        SearchCommands::Projects {
-            query,
-            limit,
-            archived,
-        } => search_projects(&query, limit, archived, output).await,
+        SearchCommands::Issues { query, archived } => search_issues(&query, archived, output).await,
+        SearchCommands::Projects { query, archived } => {
+            search_projects(&query, archived, output).await
+        }
     }
 }
 
-async fn search_issues(
-    query: &str,
-    limit: u32,
-    include_archived: bool,
-    output: &OutputOptions,
-) -> Result<()> {
+async fn search_issues(query: &str, include_archived: bool, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     let graphql_query = r#"
-        query($first: Int!, $includeArchived: Boolean, $filter: IssueFilter) {
-            issues(first: $first, includeArchived: $includeArchived, filter: $filter) {
+        query($first: Int, $after: String, $last: Int, $before: String, $includeArchived: Boolean, $filter: IssueFilter) {
+            issues(first: $first, after: $after, last: $last, before: $before, includeArchived: $includeArchived, filter: $filter) {
                 nodes {
                     id
                     identifier
@@ -93,37 +77,51 @@ async fn search_issues(
                     priority
                     state { name }
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let variables = json!({
-        "first": limit,
-        "includeArchived": include_archived,
-        "filter": {
+    let mut variables = serde_json::Map::new();
+    variables.insert("includeArchived".to_string(), json!(include_archived));
+    variables.insert(
+        "filter".to_string(),
+        json!({
             "or": [
                 { "title": { "containsIgnoreCase": query } },
                 { "description": { "containsIgnoreCase": query } }
             ]
-        }
-    });
+        }),
+    );
 
-    let result = client.query(graphql_query, Some(variables)).await?;
+    let pagination = output.pagination.with_default_limit(50);
+    let mut issues = paginate_nodes(
+        &client,
+        graphql_query,
+        variables,
+        &["data", "issues", "nodes"],
+        &["data", "issues", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
 
-    let mut issues = result["data"]["issues"]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(issues), output)?;
+        return Ok(());
+    }
 
+    filter_values(&mut issues, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut issues, sort_key, output.json.order);
     }
 
-    if output.is_json() {
-        print_json(&serde_json::json!(issues), &output.json)?;
-        return Ok(());
-    }
-
+    ensure_non_empty(&issues, output)?;
     if issues.is_empty() {
         println!("No issues found matching: {}", query);
         return Ok(());
@@ -161,49 +159,62 @@ async fn search_issues(
 
 async fn search_projects(
     query: &str,
-    limit: u32,
     include_archived: bool,
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
     let graphql_query = r#"
-        query($first: Int!, $includeArchived: Boolean, $filter: ProjectFilter) {
-            projects(first: $first, includeArchived: $includeArchived, filter: $filter) {
+        query($first: Int, $after: String, $last: Int, $before: String, $includeArchived: Boolean, $filter: ProjectFilter) {
+            projects(first: $first, after: $after, last: $last, before: $before, includeArchived: $includeArchived, filter: $filter) {
                 nodes {
                     id
                     name
                     status { name }
                     labels { nodes { name } }
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let variables = json!({
-        "first": limit,
-        "includeArchived": include_archived,
-        "filter": {
+    let mut variables = serde_json::Map::new();
+    variables.insert("includeArchived".to_string(), json!(include_archived));
+    variables.insert(
+        "filter".to_string(),
+        json!({
             "name": { "containsIgnoreCase": query }
-        }
-    });
+        }),
+    );
 
-    let result = client.query(graphql_query, Some(variables)).await?;
+    let pagination = output.pagination.with_default_limit(50);
+    let mut projects = paginate_nodes(
+        &client,
+        graphql_query,
+        variables,
+        &["data", "projects", "nodes"],
+        &["data", "projects", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
 
-    let mut projects = result["data"]["projects"]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(projects), output)?;
+        return Ok(());
+    }
 
+    filter_values(&mut projects, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut projects, sort_key, output.json.order);
     }
 
-    if output.is_json() {
-        print_json(&serde_json::json!(projects), &output.json)?;
-        return Ok(());
-    }
-
+    ensure_non_empty(&projects, output)?;
     if projects.is_empty() {
         println!("No projects found matching: {}", query);
         return Ok(());

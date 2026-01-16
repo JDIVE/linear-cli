@@ -8,7 +8,8 @@ use tabled::{Table, Tabled};
 use crate::api::LinearClient;
 use crate::cache::{Cache, CacheType};
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -58,47 +59,78 @@ pub async fn handle(cmd: TeamCommands, output: &OutputOptions) -> Result<()> {
 }
 
 async fn list_teams(output: &OutputOptions) -> Result<()> {
-    let cache = Cache::new()?;
+    let can_use_cache = !output.cache.no_cache
+        && output.pagination.after.is_none()
+        && output.pagination.before.is_none()
+        && !output.pagination.all
+        && output.pagination.page_size.is_none()
+        && output.pagination.limit.is_none();
 
-    // Try to get teams from cache first
-    let teams_data: Value = if let Some(cached) = cache.get(CacheType::Teams) {
+    let cached: Vec<Value> = if can_use_cache {
+        let cache = Cache::new()?;
+        cache
+            .get(CacheType::Teams)
+            .and_then(|data| data.as_array().cloned())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let teams = if !cached.is_empty() {
         cached
     } else {
-        // Fetch from API
         let client = LinearClient::new()?;
-
+        let pagination = output.pagination.with_default_limit(100);
         let query = r#"
-            query {
-                teams(first: 100) {
+            query($first: Int, $after: String, $last: Int, $before: String) {
+                teams(first: $first, after: $after, last: $last, before: $before) {
                     nodes {
                         id
                         name
                         key
                     }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
                 }
             }
         "#;
 
-        let result = client.query(query, None).await?;
-        let data = result["data"]["teams"]["nodes"].clone();
+        let teams = paginate_nodes(
+            &client,
+            query,
+            serde_json::Map::new(),
+            &["data", "teams", "nodes"],
+            &["data", "teams", "pageInfo"],
+            &pagination,
+            100,
+        )
+        .await?;
 
-        // Cache the result
-        let _ = cache.set(CacheType::Teams, data.clone());
-        data
+        if !output.cache.no_cache {
+            let cache = Cache::with_ttl(output.cache.effective_ttl_seconds())?;
+            let _ = cache.set(CacheType::Teams, serde_json::json!(teams.clone()));
+        }
+
+        teams
     };
 
-    // Handle JSON output
-    if output.is_json() {
-        print_json(&teams_data, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(teams), output)?;
         return Ok(());
     }
 
-    let mut teams = teams_data.as_array().cloned().unwrap_or_default();
+    let mut teams = teams;
+    filter_values(&mut teams, &output.filters);
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut teams, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&teams, output)?;
     if teams.is_empty() {
         println!("No teams found.");
         return Ok(());
@@ -149,9 +181,8 @@ async fn get_team(id: &str, output: &OutputOptions) -> Result<()> {
         anyhow::bail!("Team not found: {}", id);
     }
 
-    // Handle JSON output
-    if output.is_json() {
-        print_json(team, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(team, output)?;
         return Ok(());
     }
 
@@ -228,7 +259,7 @@ async fn get_teams(ids: &[String], output: &OutputOptions) -> Result<()> {
 
     let results = futures::future::join_all(futures).await;
 
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let teams: Vec<_> = results
             .iter()
             .filter_map(|(_, r)| {
@@ -242,7 +273,7 @@ async fn get_teams(ids: &[String], output: &OutputOptions) -> Result<()> {
                 })
             })
             .collect();
-        print_json(&serde_json::json!(teams), &output.json)?;
+        print_json(&serde_json::json!(teams), output)?;
         return Ok(());
     }
 

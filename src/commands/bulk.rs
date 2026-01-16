@@ -259,10 +259,10 @@ pub async fn handle(cmd: BulkCommands, output: &OutputOptions) -> Result<()> {
 
 async fn bulk_update_state(state: &str, issues: Vec<String>, output: &OutputOptions) -> Result<()> {
     if issues.is_empty() {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({ "error": "No issues specified", "results": [] }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("No issues specified.");
@@ -270,7 +270,7 @@ async fn bulk_update_state(state: &str, issues: Vec<String>, output: &OutputOpti
         return Ok(());
     }
 
-    if !output.is_json() {
+    if !output.is_json() && !output.has_template() {
         println!(
             "{} Updating state to '{}' for {} issues...",
             ">>".cyan(),
@@ -300,10 +300,10 @@ async fn bulk_update_state(state: &str, issues: Vec<String>, output: &OutputOpti
 
 async fn bulk_assign(user: &str, issues: Vec<String>, output: &OutputOptions) -> Result<()> {
     if issues.is_empty() {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({ "error": "No issues specified", "results": [] }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("No issues specified.");
@@ -311,7 +311,7 @@ async fn bulk_assign(user: &str, issues: Vec<String>, output: &OutputOptions) ->
         return Ok(());
     }
 
-    if !output.is_json() {
+    if !output.is_json() && !output.has_template() {
         println!(
             "{} Assigning {} issues to '{}'...",
             ">>".cyan(),
@@ -326,10 +326,10 @@ async fn bulk_assign(user: &str, issues: Vec<String>, output: &OutputOptions) ->
     let user_id = match resolve_user_id(&client, user).await {
         Ok(id) => id,
         Err(e) => {
-            if output.is_json() {
+            if output.is_json() || output.has_template() {
                 print_json(
                     &json!({ "error": format!("Failed to resolve user '{}': {}", user, e), "results": [] }),
-                    &output.json,
+                    output,
                 )?;
             } else {
                 println!("{} Failed to resolve user '{}': {}", "x".red(), user, e);
@@ -356,10 +356,10 @@ async fn bulk_assign(user: &str, issues: Vec<String>, output: &OutputOptions) ->
 
 async fn bulk_label(label: &str, issues: Vec<String>, output: &OutputOptions) -> Result<()> {
     if issues.is_empty() {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({ "error": "No issues specified", "results": [] }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("No issues specified.");
@@ -367,7 +367,7 @@ async fn bulk_label(label: &str, issues: Vec<String>, output: &OutputOptions) ->
         return Ok(());
     }
 
-    if !output.is_json() {
+    if !output.is_json() && !output.has_template() {
         println!(
             "{} Adding label '{}' to {} issues...",
             ">>".cyan(),
@@ -382,10 +382,10 @@ async fn bulk_label(label: &str, issues: Vec<String>, output: &OutputOptions) ->
     let label_id = match resolve_label_id(&client, label).await {
         Ok(id) => id,
         Err(e) => {
-            if output.is_json() {
+            if output.is_json() || output.has_template() {
                 print_json(
                     &json!({ "error": format!("Failed to resolve label '{}': {}", label, e), "results": [] }),
-                    &output.json,
+                    output,
                 )?;
             } else {
                 println!("{} Failed to resolve label '{}': {}", "x".red(), label, e);
@@ -412,10 +412,10 @@ async fn bulk_label(label: &str, issues: Vec<String>, output: &OutputOptions) ->
 
 async fn bulk_unassign(issues: Vec<String>, output: &OutputOptions) -> Result<()> {
     if issues.is_empty() {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({ "error": "No issues specified", "results": [] }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("No issues specified.");
@@ -423,7 +423,7 @@ async fn bulk_unassign(issues: Vec<String>, output: &OutputOptions) -> Result<()
         return Ok(());
     }
 
-    if !output.is_json() {
+    if !output.is_json() && !output.has_template() {
         println!("{} Unassigning {} issues...", ">>".cyan(), issues.len());
     }
 
@@ -704,7 +704,7 @@ fn print_summary(results: &[BulkResult], action: &str, output: &OutputOptions) {
     let id_width = display_options().max_width(30);
     let err_width = display_options().max_width(60);
 
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let json_results: Vec<_> = results
             .iter()
             .map(|r| {
@@ -726,7 +726,7 @@ fn print_summary(results: &[BulkResult], action: &str, output: &OutputOptions) {
                 "failed": failure_count,
             }
         });
-        if let Err(err) = print_json(&payload, &output.json) {
+        if let Err(err) = print_json(&payload, output) {
             eprintln!("Error: {}", err);
         }
         return;

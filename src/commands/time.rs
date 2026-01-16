@@ -6,7 +6,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -34,9 +35,6 @@ pub enum TimeCommands {
         /// Filter by issue ID or identifier
         #[arg(short, long)]
         issue: Option<String>,
-        /// Maximum number of entries to show
-        #[arg(short, long, default_value = "20")]
-        limit: u32,
     },
     /// Delete a time entry
     Delete {
@@ -69,7 +67,7 @@ pub async fn handle(cmd: TimeCommands, output: &OutputOptions) -> Result<()> {
             duration,
             description,
         } => log_time(&issue, &duration, description).await,
-        TimeCommands::List { issue, limit } => list_time_entries(issue, limit, output).await,
+        TimeCommands::List { issue } => list_time_entries(issue, output).await,
         TimeCommands::Delete { id, force } => delete_time_entry(&id, force).await,
     }
 }
@@ -207,21 +205,17 @@ async fn log_time(issue_id: &str, duration: &str, description: Option<String>) -
     Ok(())
 }
 
-async fn list_time_entries(
-    issue_filter: Option<String>,
-    limit: u32,
-    output: &OutputOptions,
-) -> Result<()> {
+async fn list_time_entries(issue_filter: Option<String>, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     // Query time schedules
     let query = if issue_filter.is_some() {
         r#"
-            query($issueId: String!, $limit: Int!) {
+            query($issueId: String!, $first: Int, $after: String, $last: Int, $before: String) {
                 issue(id: $issueId) {
                     id
                     identifier
-                    timeSchedules(first: $limit) {
+                    timeSchedules(first: $first, after: $after, last: $last, before: $before) {
                         nodes {
                             id
                             duration
@@ -229,14 +223,20 @@ async fn list_time_entries(
                             description
                             user { name }
                         }
+                        pageInfo {
+                            hasNextPage
+                            endCursor
+                            hasPreviousPage
+                            startCursor
+                        }
                     }
                 }
             }
         "#
     } else {
         r#"
-            query($limit: Int!) {
-                timeSchedules(first: $limit) {
+            query($first: Int, $after: String, $last: Int, $before: String) {
+                timeSchedules(first: $first, after: $after, last: $last, before: $before) {
                     nodes {
                         id
                         duration
@@ -245,75 +245,88 @@ async fn list_time_entries(
                         issue { identifier }
                         user { name }
                     }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
                 }
             }
         "#
     };
 
-    let variables = if let Some(ref issue_id) = issue_filter {
-        json!({ "issueId": issue_id, "limit": limit })
+    let pagination = output.pagination.with_default_limit(20);
+    let entries = if let Some(issue_id) = issue_filter {
+        let mut vars = serde_json::Map::new();
+        vars.insert("issueId".to_string(), json!(issue_id));
+        paginate_nodes(
+            &client,
+            query,
+            vars,
+            &["data", "issue", "timeSchedules", "nodes"],
+            &["data", "issue", "timeSchedules", "pageInfo"],
+            &pagination,
+            20,
+        )
+        .await
     } else {
-        json!({ "limit": limit })
+        paginate_nodes(
+            &client,
+            query,
+            serde_json::Map::new(),
+            &["data", "timeSchedules", "nodes"],
+            &["data", "timeSchedules", "pageInfo"],
+            &pagination,
+            20,
+        )
+        .await
     };
 
-    let result = client.query(query, Some(variables)).await;
-
-    match result {
-        Ok(data) => {
-            let entries = if issue_filter.is_some() {
-                &data["data"]["issue"]["timeSchedules"]["nodes"]
-            } else {
-                &data["data"]["timeSchedules"]["nodes"]
-            };
-
-            if let Some(entries) = entries.as_array() {
-                let mut entries = entries.clone();
-                if let Some(sort_key) = output.json.sort.as_deref() {
-                    sort_values(&mut entries, sort_key, output.json.order);
-                }
-
-                if output.is_json() {
-                    print_json(&serde_json::Value::Array(entries.clone()), &output.json)?;
-                    return Ok(());
-                }
-
-                if entries.is_empty() {
-                    println!("No time entries found.");
-                    return Ok(());
-                }
-
-                let issue_width = display_options().max_width(20);
-                let user_width = display_options().max_width(30);
-                let rows: Vec<TimeEntryRow> = entries
-                    .iter()
-                    .map(|e| {
-                        let duration_mins = e["duration"].as_i64().unwrap_or(0) as i32;
-                        TimeEntryRow {
-                            id: e["id"].as_str().unwrap_or("").chars().take(8).collect(),
-                            issue: truncate(
-                                e["issue"]["identifier"].as_str().unwrap_or("-"),
-                                issue_width,
-                            ),
-                            duration: format_duration(duration_mins),
-                            date: e["createdAt"]
-                                .as_str()
-                                .unwrap_or("")
-                                .chars()
-                                .take(10)
-                                .collect(),
-                            user: truncate(e["user"]["name"].as_str().unwrap_or("-"), user_width),
-                        }
-                    })
-                    .collect();
-
-                let table = Table::new(rows).to_string();
-                println!("{}", table);
-            } else {
-                println!(
-                    "{} Time tracking may not be available for your workspace.",
-                    "!".yellow()
-                );
+    match entries {
+        Ok(mut entries) => {
+            if output.is_json() || output.has_template() {
+                print_json(&serde_json::Value::Array(entries.clone()), output)?;
+                return Ok(());
             }
+
+            filter_values(&mut entries, &output.filters);
+            if let Some(sort_key) = output.json.sort.as_deref() {
+                sort_values(&mut entries, sort_key, output.json.order);
+            }
+
+            ensure_non_empty(&entries, output)?;
+            if entries.is_empty() {
+                println!("No time entries found.");
+                return Ok(());
+            }
+
+            let issue_width = display_options().max_width(20);
+            let user_width = display_options().max_width(30);
+            let rows: Vec<TimeEntryRow> = entries
+                .iter()
+                .map(|e| {
+                    let duration_mins = e["duration"].as_i64().unwrap_or(0) as i32;
+                    TimeEntryRow {
+                        id: e["id"].as_str().unwrap_or("").chars().take(8).collect(),
+                        issue: truncate(
+                            e["issue"]["identifier"].as_str().unwrap_or("-"),
+                            issue_width,
+                        ),
+                        duration: format_duration(duration_mins),
+                        date: e["createdAt"]
+                            .as_str()
+                            .unwrap_or("")
+                            .chars()
+                            .take(10)
+                            .collect(),
+                        user: truncate(e["user"]["name"].as_str().unwrap_or("-"), user_width),
+                    }
+                })
+                .collect();
+
+            let table = Table::new(rows).to_string();
+            println!("{}", table);
         }
         Err(_) => {
             println!(

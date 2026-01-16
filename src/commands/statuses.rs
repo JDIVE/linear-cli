@@ -8,7 +8,8 @@ use tabled::{Table, Tabled};
 use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -70,80 +71,114 @@ pub async fn handle(cmd: StatusCommands, output: &OutputOptions) -> Result<()> {
 
 async fn list_statuses(team: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
-    let cache = Cache::new()?;
 
     // Resolve team key/name to UUID
     let team_id = resolve_team_id(&client, team).await?;
 
-    // Try to get statuses from cache first
-    let (team_name, states): (String, Vec<Value>) =
+    let can_use_cache = !output.cache.no_cache
+        && output.pagination.after.is_none()
+        && output.pagination.before.is_none()
+        && !output.pagination.all
+        && output.pagination.page_size.is_none()
+        && output.pagination.limit.is_none();
+
+    let (team_name, states): (String, Vec<Value>) = if can_use_cache {
+        let cache = Cache::new()?;
         if let Some(cached) = cache.get_keyed(CacheType::Statuses, &team_id) {
             let name = cached["team_name"].as_str().unwrap_or("").to_string();
             let states_data = cached["states"].as_array().cloned().unwrap_or_default();
             (name, states_data)
         } else {
-            // Fetch from API
-            let query = r#"
-                query($teamId: String!) {
-                    team(id: $teamId) {
-                        id
-                        name
-                        states {
-                            nodes {
-                                id
-                                name
-                                type
-                                color
-                                position
-                                description
-                            }
+            (String::new(), Vec::new())
+        }
+    } else {
+        (String::new(), Vec::new())
+    };
+
+    let (team_name, states) = if !states.is_empty() {
+        (team_name, states)
+    } else {
+        let team_query = r#"
+            query($teamId: String!) {
+                team(id: $teamId) {
+                    id
+                    name
+                }
+            }
+        "#;
+        let team_result = client
+            .query(team_query, Some(json!({ "teamId": team_id })))
+            .await?;
+        let team_data = &team_result["data"]["team"];
+
+        if team_data.is_null() {
+            anyhow::bail!("Team not found: {}", team);
+        }
+
+        let name = team_data["name"].as_str().unwrap_or("").to_string();
+
+        let states_query = r#"
+            query($teamId: String!, $first: Int, $after: String, $last: Int, $before: String) {
+                team(id: $teamId) {
+                    states(first: $first, after: $after, last: $last, before: $before) {
+                        nodes {
+                            id
+                            name
+                            type
+                            color
+                            position
+                            description
+                        }
+                        pageInfo {
+                            hasNextPage
+                            endCursor
+                            hasPreviousPage
+                            startCursor
                         }
                     }
                 }
-            "#;
-
-            let result = client
-                .query(query, Some(json!({ "teamId": team_id })))
-                .await?;
-            let team_data = &result["data"]["team"];
-
-            if team_data.is_null() {
-                anyhow::bail!("Team not found: {}", team);
             }
+        "#;
 
-            let name = team_data["name"].as_str().unwrap_or("").to_string();
-            let states_data = team_data["states"]["nodes"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
+        let mut vars = serde_json::Map::new();
+        vars.insert("teamId".to_string(), json!(team_id));
+        let pagination = output.pagination.with_default_limit(100);
+        let states = paginate_nodes(
+            &client,
+            states_query,
+            vars,
+            &["data", "team", "states", "nodes"],
+            &["data", "team", "states", "pageInfo"],
+            &pagination,
+            100,
+        )
+        .await?;
 
-            // Cache the result
+        if !output.cache.no_cache {
+            let cache = Cache::with_ttl(output.cache.effective_ttl_seconds())?;
             let cache_data = json!({
                 "team_name": name,
-                "states": states_data
+                "states": states,
             });
             let _ = cache.set_keyed(CacheType::Statuses, &team_id, cache_data);
-
-            (name, states_data)
-        };
-
-    if states.is_empty() {
-        if output.is_json() {
-            print_json(&json!({"statuses": [], "team": team_name}), &output.json)?;
-            return Ok(());
         }
-        println!("No statuses found for team '{}'.", team_name);
-        return Ok(());
-    }
 
-    if output.is_json() {
+        (name, states)
+    };
+
+    if output.is_json() || output.has_template() {
         print_json(
             &json!({
                 "team": team_name,
                 "statuses": states
             }),
-            &output.json,
+            output,
         )?;
+        return Ok(());
+    }
+
+    if states.is_empty() {
+        println!("No statuses found for team '{}'.", team_name);
         return Ok(());
     }
 
@@ -155,10 +190,12 @@ async fn list_statuses(team: &str, output: &OutputOptions) -> Result<()> {
 
     let width = display_options().max_width(30);
     let mut states = states;
+    filter_values(&mut states, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut states, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&states, output)?;
     let rows: Vec<StatusRow> = states
         .iter()
         .map(|s| {
@@ -239,13 +276,13 @@ async fn get_statuses(ids: &[String], team: &str, output: &OutputOptions) -> Res
 
         if let Some(s) = status {
             found.push(s.clone());
-        } else if !output.is_json() {
+        } else if !output.is_json() && !output.has_template() {
             eprintln!("{} Status not found: {}", "!".yellow(), id);
         }
     }
 
-    if output.is_json() {
-        print_json(&serde_json::json!(found), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(found), output)?;
         return Ok(());
     }
 

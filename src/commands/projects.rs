@@ -7,7 +7,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -145,7 +146,10 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             color,
             icon,
             dry_run,
-        } => update_project(&id, name, description, color, icon, dry_run, output).await,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            update_project(&id, name, description, color, icon, dry_run, output).await
+        }
         ProjectCommands::Delete { id, force } => delete_project(&id, force).await,
         ProjectCommands::AddLabels { id, labels } => add_labels(&id, labels, output).await,
     }
@@ -156,8 +160,8 @@ async fn list_projects(include_archived: bool, output: &OutputOptions) -> Result
 
     // Simplified query to reduce GraphQL complexity (was exceeding 10000 limit)
     let query = r#"
-        query($includeArchived: Boolean) {
-            projects(first: 50, includeArchived: $includeArchived) {
+        query($includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
+            projects(first: $first, after: $after, last: $last, before: $before, includeArchived: $includeArchived) {
                 nodes {
                     id
                     name
@@ -166,29 +170,42 @@ async fn list_projects(include_archived: bool, output: &OutputOptions) -> Result
                     startDate
                     targetDate
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let result = client
-        .query(query, Some(json!({ "includeArchived": include_archived })))
-        .await?;
+    let mut vars = serde_json::Map::new();
+    vars.insert("includeArchived".to_string(), json!(include_archived));
 
-    // Handle JSON output
-    if output.is_json() {
-        print_json(&result["data"]["projects"]["nodes"], &output.json)?;
+    let pagination = output.pagination.with_default_limit(50);
+    let mut projects = paginate_nodes(
+        &client,
+        query,
+        vars,
+        &["data", "projects", "nodes"],
+        &["data", "projects", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
+
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(projects), output)?;
         return Ok(());
     }
 
-    let mut projects = result["data"]["projects"]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
+    filter_values(&mut projects, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut projects, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&projects, output)?;
     if projects.is_empty() {
         println!("No projects found.");
         return Ok(());
@@ -238,8 +255,8 @@ async fn get_project(id: &str, output: &OutputOptions) -> Result<()> {
     }
 
     // Handle JSON output
-    if output.is_json() {
-        print_json(project, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(project, output)?;
         return Ok(());
     }
 
@@ -313,7 +330,7 @@ async fn get_projects(ids: &[String], output: &OutputOptions) -> Result<()> {
 
     let results = futures::future::join_all(futures).await;
 
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let projects: Vec<_> = results
             .iter()
             .filter_map(|(_, r)| {
@@ -327,7 +344,7 @@ async fn get_projects(ids: &[String], output: &OutputOptions) -> Result<()> {
                 })
             })
             .collect();
-        print_json(&serde_json::json!(projects), &output.json)?;
+        print_json(&serde_json::json!(projects), output)?;
         return Ok(());
     }
 
@@ -394,8 +411,8 @@ async fn create_project(
         let project = &result["data"]["projectCreate"]["project"];
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(project, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(project, output)?;
             return Ok(());
         }
 
@@ -444,7 +461,7 @@ async fn update_project(
     }
 
     if dry_run {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({
                     "dry_run": true,
@@ -453,7 +470,7 @@ async fn update_project(
                         "input": input,
                     }
                 }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("{}", "[DRY RUN] Would update project:".yellow().bold());
@@ -479,8 +496,8 @@ async fn update_project(
         let project = &result["data"]["projectUpdate"]["project"];
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(project, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(project, output)?;
             return Ok(());
         }
 
@@ -544,8 +561,8 @@ async fn add_labels(id: &str, label_ids: Vec<String>, output: &OutputOptions) ->
         let project = &result["data"]["projectUpdate"]["project"];
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(project, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(project, output)?;
             return Ok(());
         }
 

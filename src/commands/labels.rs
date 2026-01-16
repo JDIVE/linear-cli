@@ -6,7 +6,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -88,33 +89,43 @@ async fn list_labels(label_type: &str, output: &OutputOptions) -> Result<()> {
 
     let query = if label_type == "project" {
         r#"
-            query {
-                projectLabels(first: 100) {
+            query($first: Int, $after: String, $last: Int, $before: String) {
+                projectLabels(first: $first, after: $after, last: $last, before: $before) {
                     nodes {
                         id
                         name
                         color
                         parent { name }
+                    }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
                     }
                 }
             }
         "#
     } else {
         r#"
-            query {
-                issueLabels(first: 100) {
+            query($first: Int, $after: String, $last: Int, $before: String) {
+                issueLabels(first: $first, after: $after, last: $last, before: $before) {
                     nodes {
                         id
                         name
                         color
                         parent { name }
                     }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
                 }
             }
         "#
     };
-
-    let result = client.query(query, None).await?;
 
     let key = if label_type == "project" {
         "projectLabels"
@@ -122,21 +133,29 @@ async fn list_labels(label_type: &str, output: &OutputOptions) -> Result<()> {
         "issueLabels"
     };
 
-    // Handle JSON output
-    if output.is_json() {
-        print_json(&result["data"][key]["nodes"], &output.json)?;
+    let pagination = output.pagination.with_default_limit(100);
+    let mut labels = paginate_nodes(
+        &client,
+        query,
+        serde_json::Map::new(),
+        &["data", key, "nodes"],
+        &["data", key, "pageInfo"],
+        &pagination,
+        100,
+    )
+    .await?;
+
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(labels), output)?;
         return Ok(());
     }
 
-    let mut labels = result["data"][key]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
+    filter_values(&mut labels, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut labels, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&labels, output)?;
     if labels.is_empty() {
         println!("No {} labels found.", label_type);
         return Ok(());
@@ -217,8 +236,8 @@ async fn create_label(
         let label = &result["data"][key][label_key];
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(label, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(label, output)?;
             return Ok(());
         }
 

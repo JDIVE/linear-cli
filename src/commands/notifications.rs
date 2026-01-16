@@ -6,7 +6,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -17,9 +18,6 @@ pub enum NotificationCommands {
         /// Include read notifications
         #[arg(short, long)]
         all: bool,
-        /// Maximum number of notifications to show
-        #[arg(short, long, default_value = "50")]
-        limit: u32,
     },
     /// Mark a notification as read
     Read {
@@ -49,7 +47,7 @@ struct NotificationRow {
 
 pub async fn handle(cmd: NotificationCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
-        NotificationCommands::List { all, limit } => list_notifications(all, limit, output).await,
+        NotificationCommands::List { all } => list_notifications(all, output).await,
         NotificationCommands::Read { id } => mark_as_read(&id).await,
         NotificationCommands::ReadAll => mark_all_as_read().await,
         NotificationCommands::Count => show_count(output).await,
@@ -71,12 +69,12 @@ fn format_notification_type(notification_type: &str) -> String {
     }
 }
 
-async fn list_notifications(include_all: bool, limit: u32, output: &OutputOptions) -> Result<()> {
+async fn list_notifications(include_all: bool, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
-        query($first: Int!) {
-            notifications(first: $first) {
+        query($first: Int, $after: String, $last: Int, $before: String) {
+            notifications(first: $first, after: $after, last: $last, before: $before) {
                 nodes {
                     id
                     type
@@ -100,19 +98,30 @@ async fn list_notifications(include_all: bool, limit: u32, output: &OutputOption
                         }
                     }
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let result = client.query(query, Some(json!({ "first": limit }))).await?;
-
-    let empty = vec![];
-    let notifications = result["data"]["notifications"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
+    let pagination = output.pagination.with_default_limit(50);
+    let notifications = paginate_nodes(
+        &client,
+        query,
+        serde_json::Map::new(),
+        &["data", "notifications", "nodes"],
+        &["data", "notifications", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
 
     let mut filtered: Vec<_> = if include_all {
-        notifications.to_vec()
+        notifications.clone()
     } else {
         notifications
             .iter()
@@ -121,15 +130,18 @@ async fn list_notifications(include_all: bool, limit: u32, output: &OutputOption
             .collect()
     };
 
+    filter_values(&mut filtered, &output.filters);
+
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut filtered, sort_key, output.json.order);
     }
 
-    if output.is_json() {
-        print_json(&serde_json::json!(filtered), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(filtered), output)?;
         return Ok(());
     }
 
+    ensure_non_empty(&filtered, output)?;
     if filtered.is_empty() {
         if include_all {
             println!("No notifications found.");
@@ -337,8 +349,8 @@ async fn show_count(output: &OutputOptions) -> Result<()> {
         .filter(|n| n["readAt"].is_null())
         .count();
 
-    if output.is_json() {
-        print_json(&json!({ "count": unread_count }), &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&json!({ "count": unread_count }), output)?;
         return Ok(());
     }
 

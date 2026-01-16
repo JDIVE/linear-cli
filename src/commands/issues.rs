@@ -1,14 +1,15 @@
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::io::{self, BufRead};
 use std::process::Command;
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 use crate::AgentOptions;
 
@@ -41,9 +42,6 @@ pub enum IssueCommands {
         /// Include archived issues
         #[arg(long)]
         archived: bool,
-        /// Maximum number of issues to return
-        #[arg(short, long, default_value = "50")]
-        limit: u32,
     },
     /// Get issue details
     #[command(after_help = r#"EXAMPLES:
@@ -189,13 +187,7 @@ pub async fn handle(
             assignee,
             project,
             archived,
-            limit,
-        } => {
-            list_issues(
-                team, state, assignee, project, archived, limit, output, agent_opts,
-            )
-            .await
-        }
+        } => list_issues(team, state, assignee, project, archived, output, agent_opts).await,
         IssueCommands::Get { ids } => {
             // Support reading from stdin if no IDs provided or if "-" is passed
             let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
@@ -230,6 +222,7 @@ pub async fn handle(
             template,
             dry_run,
         } => {
+            let dry_run = dry_run || output.dry_run || agent_opts.dry_run;
             // Load template if specified
             let tpl = if let Some(ref tpl_name) = template {
                 templates::get_template(tpl_name)?
@@ -318,6 +311,7 @@ pub async fn handle(
             assignee,
             dry_run,
         } => {
+            let dry_run = dry_run || output.dry_run || agent_opts.dry_run;
             if data.as_deref() == Some("-") && description.as_deref() == Some("-") {
                 anyhow::bail!("--data - and --description - cannot both read from stdin");
             }
@@ -375,16 +369,18 @@ async fn list_issues(
     assignee: Option<String>,
     project: Option<String>,
     include_archived: bool,
-    limit: u32,
     output: &OutputOptions,
     _agent_opts: AgentOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
-        query($team: String, $state: String, $assignee: String, $project: String, $includeArchived: Boolean, $limit: Int) {
+        query($team: String, $state: String, $assignee: String, $project: String, $includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
             issues(
-                first: $limit,
+                first: $first,
+                after: $after,
+                last: $last,
+                before: $before,
                 includeArchived: $includeArchived,
                 filter: {
                     team: { name: { eqIgnoreCase: $team } },
@@ -401,45 +397,57 @@ async fn list_issues(
                     state { name }
                     assignee { name }
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let mut variables = json!({
-        "includeArchived": include_archived,
-        "limit": limit
-    });
+    let mut variables = Map::new();
+    variables.insert("includeArchived".to_string(), json!(include_archived));
 
     if let Some(t) = team {
-        variables["team"] = json!(t);
+        variables.insert("team".to_string(), json!(t));
     }
     if let Some(s) = state {
-        variables["state"] = json!(s);
+        variables.insert("state".to_string(), json!(s));
     }
     if let Some(a) = assignee {
-        variables["assignee"] = json!(a);
+        variables.insert("assignee".to_string(), json!(a));
     }
     if let Some(p) = project {
-        variables["project"] = json!(p);
+        variables.insert("project".to_string(), json!(p));
     }
 
-    let result = client.query(query, Some(variables)).await?;
+    let pagination = output.pagination.with_default_limit(50);
+    let issues = paginate_nodes(
+        &client,
+        query,
+        variables,
+        &["data", "issues", "nodes"],
+        &["data", "issues", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
 
-    // Handle JSON output
-    if output.is_json() {
-        print_json(&result["data"]["issues"]["nodes"], &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(issues), output)?;
         return Ok(());
     }
 
-    let mut issues = result["data"]["issues"]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let mut issues = issues;
+    filter_values(&mut issues, &output.filters);
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut issues, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&issues, output)?;
     if issues.is_empty() {
         println!("No issues found.");
         return Ok(());
@@ -507,7 +515,7 @@ async fn get_issues(ids: &[String], output: &OutputOptions) -> Result<()> {
     let results = futures::future::join_all(futures).await;
 
     // JSON output: array of issues
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let issues: Vec<_> = results
             .iter()
             .filter_map(|(_, r)| {
@@ -521,7 +529,7 @@ async fn get_issues(ids: &[String], output: &OutputOptions) -> Result<()> {
                 })
             })
             .collect();
-        print_json(&serde_json::json!(issues), &output.json)?;
+        print_json(&serde_json::json!(issues), output)?;
         return Ok(());
     }
 
@@ -581,8 +589,8 @@ async fn get_issue(id: &str, output: &OutputOptions) -> Result<()> {
     }
 
     // Handle JSON output
-    if output.is_json() {
-        print_json(issue, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(issue, output)?;
         return Ok(());
     }
 
@@ -709,7 +717,7 @@ async fn create_issue(
 
     // Dry run: show what would be created without actually creating
     if dry_run {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({
                     "dry_run": true,
@@ -724,7 +732,7 @@ async fn create_issue(
                         "labels": labels,
                     }
                 }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("{}", "[DRY RUN] Would create issue:".yellow().bold());
@@ -783,8 +791,8 @@ async fn create_issue(
         }
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(issue, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
             return Ok(());
         }
 
@@ -855,7 +863,7 @@ async fn update_issue(
     }
 
     if dry_run {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({
                     "dry_run": true,
@@ -864,7 +872,7 @@ async fn update_issue(
                         "input": input,
                     }
                 }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("{}", "[DRY RUN] Would update issue:".yellow().bold());
@@ -900,8 +908,8 @@ async fn update_issue(
         }
 
         // Handle JSON output
-        if output.is_json() {
-            print_json(issue, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
             return Ok(());
         }
 

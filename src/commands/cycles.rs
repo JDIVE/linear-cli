@@ -6,7 +6,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -60,23 +61,11 @@ async fn list_cycles(team: &str, include_all: bool, output: &OutputOptions) -> R
     // Resolve team key/name to UUID
     let team_id = resolve_team_id(&client, team).await?;
 
-    // First, get the team ID if a name was provided
     let team_query = r#"
         query($teamId: String!) {
             team(id: $teamId) {
                 id
                 name
-                cycles(first: 50) {
-                    nodes {
-                        id
-                        name
-                        number
-                        startsAt
-                        endsAt
-                        completedAt
-                        progress
-                    }
-                }
             }
         }
     "#;
@@ -90,26 +79,69 @@ async fn list_cycles(team: &str, include_all: bool, output: &OutputOptions) -> R
         anyhow::bail!("Team not found: {}", team);
     }
 
-    if output.is_json() {
-        print_json(team_data, &output.json)?;
+    let team_name = team_data["name"].as_str().unwrap_or("");
+
+    let cycles_query = r#"
+        query($teamId: String!, $first: Int, $after: String, $last: Int, $before: String) {
+            team(id: $teamId) {
+                cycles(first: $first, after: $after, last: $last, before: $before) {
+                    nodes {
+                        id
+                        name
+                        number
+                        startsAt
+                        endsAt
+                        completedAt
+                        progress
+                    }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
+                }
+            }
+        }
+    "#;
+
+    let mut vars = serde_json::Map::new();
+    vars.insert("teamId".to_string(), json!(team_id));
+    let pagination = output.pagination.with_default_limit(50);
+    let cycles = paginate_nodes(
+        &client,
+        cycles_query,
+        vars,
+        &["data", "team", "cycles", "nodes"],
+        &["data", "team", "cycles", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
+
+    let cycles: Vec<_> = cycles
+        .into_iter()
+        .filter(|c| include_all || c["completedAt"].is_null())
+        .collect();
+
+    if output.is_json() || output.has_template() {
+        print_json(
+            &json!({
+                "team": team_name,
+                "cycles": cycles
+            }),
+            output,
+        )?;
         return Ok(());
     }
-
-    let team_name = team_data["name"].as_str().unwrap_or("");
-    let cycles = team_data["cycles"]["nodes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
 
     if cycles.is_empty() {
         println!("No cycles found for team '{}'.", team_name);
         return Ok(());
     }
 
-    let mut filtered: Vec<_> = cycles
-        .into_iter()
-        .filter(|c| include_all || c["completedAt"].is_null())
-        .collect();
+    let mut filtered = cycles;
+    filter_values(&mut filtered, &output.filters);
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut filtered, sort_key, output.json.order);
@@ -148,6 +180,7 @@ async fn list_cycles(team: &str, include_all: bool, output: &OutputOptions) -> R
         })
         .collect();
 
+    ensure_non_empty(&filtered, output)?;
     if rows.is_empty() {
         println!(
             "No active cycles found for team '{}'. Use --all to see completed cycles.",
@@ -207,8 +240,8 @@ async fn current_cycle(team: &str, output: &OutputOptions) -> Result<()> {
         anyhow::bail!("Team not found: {}", team);
     }
 
-    if output.is_json() {
-        print_json(team_data, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(team_data, output)?;
         return Ok(());
     }
 

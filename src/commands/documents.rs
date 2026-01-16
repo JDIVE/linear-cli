@@ -7,7 +7,8 @@ use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
-use crate::output::{print_json, sort_values, OutputOptions};
+use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -119,7 +120,10 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
             color,
             project,
             dry_run,
-        } => update_document(&id, title, content, icon, color, project, dry_run, output).await,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            update_document(&id, title, content, icon, color, project, dry_run, output).await
+        }
     }
 }
 
@@ -131,26 +135,38 @@ async fn list_documents(
     let client = LinearClient::new()?;
 
     let query = r#"
-        query($includeArchived: Boolean) {
-            documents(first: 100, includeArchived: $includeArchived) {
+        query($includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
+            documents(first: $first, after: $after, last: $last, before: $before, includeArchived: $includeArchived) {
                 nodes {
                     id
                     title
                     updatedAt
                     project { id name }
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
             }
         }
     "#;
 
-    let variables = json!({ "includeArchived": include_archived });
+    let mut vars = serde_json::Map::new();
+    vars.insert("includeArchived".to_string(), json!(include_archived));
 
-    let result = client.query(query, Some(variables)).await?;
-
-    let empty = vec![];
-    let documents = result["data"]["documents"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
+    let pagination = output.pagination.with_default_limit(100);
+    let documents = paginate_nodes(
+        &client,
+        query,
+        vars,
+        &["data", "documents", "nodes"],
+        &["data", "documents", "pageInfo"],
+        &pagination,
+        100,
+    )
+    .await?;
 
     // Filter by project if specified
     let mut filtered_docs: Vec<_> = if let Some(ref pid) = project_id {
@@ -164,20 +180,23 @@ async fn list_documents(
             .cloned()
             .collect()
     } else {
-        documents.to_vec()
+        documents
     };
+
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(filtered_docs), output)?;
+        return Ok(());
+    }
+
+    filter_values(&mut filtered_docs, &output.filters);
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut filtered_docs, sort_key, output.json.order);
     }
 
+    ensure_non_empty(&filtered_docs, output)?;
     if filtered_docs.is_empty() {
         println!("No documents found.");
-        return Ok(());
-    }
-
-    if output.is_json() {
-        print_json(&serde_json::json!(filtered_docs), &output.json)?;
         return Ok(());
     }
 
@@ -235,8 +254,8 @@ async fn get_document(id: &str, output: &OutputOptions) -> Result<()> {
         anyhow::bail!("Document not found: {}", id);
     }
 
-    if output.is_json() {
-        print_json(document, &output.json)?;
+    if output.is_json() || output.has_template() {
+        print_json(document, output)?;
         return Ok(());
     }
 
@@ -285,7 +304,7 @@ async fn get_documents(ids: &[String], output: &OutputOptions) -> Result<()> {
         return get_document(&ids[0], output).await;
     }
 
-    if output.is_json() {
+    if output.is_json() || output.has_template() {
         let client = LinearClient::new()?;
         let mut docs: Vec<serde_json::Value> = Vec::new();
         for id in ids {
@@ -311,7 +330,7 @@ async fn get_documents(ids: &[String], output: &OutputOptions) -> Result<()> {
                 docs.push(document.clone());
             }
         }
-        print_json(&serde_json::json!(docs), &output.json)?;
+        print_json(&serde_json::json!(docs), output)?;
         return Ok(());
     }
 
@@ -365,8 +384,8 @@ async fn create_document(
 
     if result["data"]["documentCreate"]["success"].as_bool() == Some(true) {
         let document = &result["data"]["documentCreate"]["document"];
-        if output.is_json() {
-            print_json(document, &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(document, output)?;
             return Ok(());
         }
         println!(
@@ -419,7 +438,7 @@ async fn update_document(
     }
 
     if dry_run {
-        if output.is_json() {
+        if output.is_json() || output.has_template() {
             print_json(
                 &json!({
                     "dry_run": true,
@@ -428,7 +447,7 @@ async fn update_document(
                         "input": input,
                     }
                 }),
-                &output.json,
+                output,
             )?;
         } else {
             println!("{}", "[DRY RUN] Would update document:".yellow().bold());
@@ -451,8 +470,8 @@ async fn update_document(
         .await?;
 
     if result["data"]["documentUpdate"]["success"].as_bool() == Some(true) {
-        if output.is_json() {
-            print_json(&result["data"]["documentUpdate"]["document"], &output.json)?;
+        if output.is_json() || output.has_template() {
+            print_json(&result["data"]["documentUpdate"]["document"], output)?;
             return Ok(());
         }
         println!("{} Document updated", "+".green());
