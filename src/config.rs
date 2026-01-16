@@ -66,9 +66,11 @@ pub fn save_config(config: &Config) -> Result<()> {
 
 pub fn set_api_key(key: &str) -> Result<()> {
     let mut config = load_config()?;
-    let workspace_name = config
-        .current
-        .clone()
+    let profile = std::env::var("LINEAR_CLI_PROFILE")
+        .ok()
+        .filter(|p| !p.is_empty());
+    let workspace_name = profile
+        .or_else(|| config.current.clone())
         .unwrap_or_else(|| "default".to_string());
     config.workspaces.insert(
         workspace_name.clone(),
@@ -93,15 +95,68 @@ pub fn get_api_key() -> Result<String> {
 
     // Fall back to config file
     let config = load_config()?;
-    let current = config
-        .current
-        .as_ref()
-        .context("No workspace selected. Run: linear workspace add <name>")?;
-    let workspace = config.workspaces.get(current).context(format!(
-        "Workspace '{}' not found. Run: linear workspace add <name>",
+    let profile = std::env::var("LINEAR_CLI_PROFILE").ok().filter(|p| !p.is_empty());
+    let current = profile.or(config.current.clone()).context(
+        "No workspace selected. Run: linear config workspace-add <name> or set LINEAR_CLI_PROFILE",
+    )?;
+    let workspace = config.workspaces.get(&current).context(format!(
+        "Workspace '{}' not found. Run: linear config workspace-add <name>",
         current
     ))?;
     Ok(workspace.api_key.clone())
+}
+
+pub fn config_file_path() -> Result<PathBuf> {
+    config_path()
+}
+
+pub fn current_profile() -> Result<String> {
+    let config = load_config()?;
+    let profile = std::env::var("LINEAR_CLI_PROFILE").ok().filter(|p| !p.is_empty());
+    profile.or(config.current).context("No workspace selected")
+}
+
+pub fn set_workspace_key(name: &str, api_key: &str) -> Result<()> {
+    let mut config = load_config()?;
+    config.workspaces.insert(
+        name.to_string(),
+        Workspace {
+            api_key: api_key.to_string(),
+        },
+    );
+    if config.current.is_none() {
+        config.current = Some(name.to_string());
+    }
+    save_config(&config)?;
+    Ok(())
+}
+
+pub fn config_get(key: &str, raw: bool) -> Result<()> {
+    match key.to_lowercase().as_str() {
+        "api-key" | "api_key" => {
+            let api_key = get_api_key()?;
+            if raw || api_key.len() <= 12 {
+                println!("{}", api_key);
+            } else {
+                let masked = format!("{}...{}", &api_key[..8], &api_key[api_key.len() - 4..]);
+                println!("{}", masked);
+            }
+        }
+        "profile" => {
+            let profile = current_profile()?;
+            println!("{}", profile);
+        }
+        _ => anyhow::bail!("Unknown config key: {}", key),
+    }
+    Ok(())
+}
+
+pub fn config_set(key: &str, value: &str) -> Result<()> {
+    match key.to_lowercase().as_str() {
+        "api-key" | "api_key" => set_api_key(value),
+        "profile" => workspace_switch(value),
+        _ => anyhow::bail!("Unknown config key: {}", key),
+    }
 }
 
 pub fn show_config() -> Result<()> {

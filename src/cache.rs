@@ -8,6 +8,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Default cache TTL in seconds (1 hour)
 const DEFAULT_TTL_SECONDS: u64 = 3600;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheOptions {
+    pub ttl_seconds: Option<u64>,
+    pub no_cache: bool,
+}
+
+impl CacheOptions {
+    pub fn effective_ttl_seconds(&self) -> u64 {
+        self.ttl_seconds.unwrap_or(DEFAULT_TTL_SECONDS)
+    }
+}
+
 /// Cache entry with timestamp and data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheEntry {
@@ -95,6 +107,7 @@ impl Cache {
     pub fn new() -> Result<Self> {
         Self::with_ttl(DEFAULT_TTL_SECONDS)
     }
+
 
     /// Create a new cache instance with custom TTL in seconds
     pub fn with_ttl(ttl_seconds: u64) -> Result<Self> {
@@ -248,6 +261,14 @@ impl Cache {
             })
             .collect()
     }
+}
+
+pub fn cache_dir_path() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .context("Could not find config directory")?
+        .join("linear-cli")
+        .join("cache");
+    Ok(config_dir)
 }
 
 /// Status information for a cache type
