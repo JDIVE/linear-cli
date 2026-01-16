@@ -2,9 +2,13 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
+use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
+use crate::display_options;
+use crate::output::{print_json, sort_values, OutputOptions};
+use crate::text::truncate;
 
 #[derive(Subcommand)]
 pub enum DocumentCommands {
@@ -20,8 +24,8 @@ pub enum DocumentCommands {
     },
     /// Get document details and content
     Get {
-        /// Document ID or slug
-        id: String,
+        /// Document ID(s) or slug(s). Use "-" to read from stdin.
+        ids: Vec<String>,
     },
     /// Create a new document
     Create {
@@ -59,6 +63,9 @@ pub enum DocumentCommands {
         /// New project ID
         #[arg(short, long)]
         project: Option<String>,
+        /// Preview without updating (dry run)
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -74,17 +81,36 @@ struct DocumentRow {
     id: String,
 }
 
-pub async fn handle(cmd: DocumentCommands) -> Result<()> {
+pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
-        DocumentCommands::List { project, archived } => list_documents(project, archived).await,
-        DocumentCommands::Get { id } => get_document(&id).await,
+        DocumentCommands::List { project, archived } => {
+            list_documents(project, archived, output).await
+        }
+        DocumentCommands::Get { ids } => {
+            let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
+                let stdin = io::stdin();
+                stdin
+                    .lock()
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            } else {
+                ids
+            };
+            if final_ids.is_empty() {
+                anyhow::bail!("No document IDs provided. Provide IDs or pipe them via stdin.");
+            }
+            get_documents(&final_ids, output).await
+        }
         DocumentCommands::Create {
             title,
             project,
             content,
             icon,
             color,
-        } => create_document(&title, &project, content, icon, color).await,
+        } => create_document(&title, &project, content, icon, color, output).await,
         DocumentCommands::Update {
             id,
             title,
@@ -92,11 +118,16 @@ pub async fn handle(cmd: DocumentCommands) -> Result<()> {
             icon,
             color,
             project,
-        } => update_document(&id, title, content, icon, color, project).await,
+            dry_run,
+        } => update_document(&id, title, content, icon, color, project, dry_run, output).await,
     }
 }
 
-async fn list_documents(project_id: Option<String>, include_archived: bool) -> Result<()> {
+async fn list_documents(
+    project_id: Option<String>,
+    include_archived: bool,
+    output: &OutputOptions,
+) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
@@ -122,7 +153,7 @@ async fn list_documents(project_id: Option<String>, include_archived: bool) -> R
         .unwrap_or(&empty);
 
     // Filter by project if specified
-    let filtered_docs: Vec<_> = if let Some(ref pid) = project_id {
+    let mut filtered_docs: Vec<_> = if let Some(ref pid) = project_id {
         documents
             .iter()
             .filter(|d| {
@@ -130,16 +161,27 @@ async fn list_documents(project_id: Option<String>, include_archived: bool) -> R
                     || d["project"]["name"].as_str().map(|n| n.to_lowercase())
                         == Some(pid.to_lowercase())
             })
+            .cloned()
             .collect()
     } else {
-        documents.iter().collect()
+        documents.to_vec()
     };
+
+    if let Some(sort_key) = output.json.sort.as_deref() {
+        sort_values(&mut filtered_docs, sort_key, output.json.order);
+    }
 
     if filtered_docs.is_empty() {
         println!("No documents found.");
         return Ok(());
     }
 
+    if output.is_json() {
+        print_json(&serde_json::json!(filtered_docs), &output.json)?;
+        return Ok(());
+    }
+
+    let width = display_options().max_width(40);
     let rows: Vec<DocumentRow> = filtered_docs
         .iter()
         .map(|d| {
@@ -151,8 +193,8 @@ async fn list_documents(project_id: Option<String>, include_archived: bool) -> R
                 .collect::<String>();
 
             DocumentRow {
-                title: d["title"].as_str().unwrap_or("").to_string(),
-                project: d["project"]["name"].as_str().unwrap_or("-").to_string(),
+                title: truncate(d["title"].as_str().unwrap_or(""), width),
+                project: truncate(d["project"]["name"].as_str().unwrap_or("-"), width),
                 updated,
                 id: d["id"].as_str().unwrap_or("").to_string(),
             }
@@ -166,7 +208,7 @@ async fn list_documents(project_id: Option<String>, include_archived: bool) -> R
     Ok(())
 }
 
-async fn get_document(id: &str) -> Result<()> {
+async fn get_document(id: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     let query = r#"
@@ -193,8 +235,13 @@ async fn get_document(id: &str) -> Result<()> {
         anyhow::bail!("Document not found: {}", id);
     }
 
+    if output.is_json() {
+        print_json(document, &output.json)?;
+        return Ok(());
+    }
+
     println!("{}", document["title"].as_str().unwrap_or("").bold());
-    println!("{}", "─".repeat(40));
+    println!("{}", "-".repeat(40));
 
     if let Some(project_name) = document["project"]["name"].as_str() {
         println!("Project: {}", project_name);
@@ -226,8 +273,53 @@ async fn get_document(id: &str) -> Result<()> {
     // Display content
     if let Some(content) = document["content"].as_str() {
         println!("\n{}", "Content".bold());
-        println!("{}", "─".repeat(40));
+        println!("{}", "-".repeat(40));
         println!("{}", content);
+    }
+
+    Ok(())
+}
+
+async fn get_documents(ids: &[String], output: &OutputOptions) -> Result<()> {
+    if ids.len() == 1 {
+        return get_document(&ids[0], output).await;
+    }
+
+    if output.is_json() {
+        let client = LinearClient::new()?;
+        let mut docs: Vec<serde_json::Value> = Vec::new();
+        for id in ids {
+            let query = r#"
+                query($id: String!) {
+                    document(id: $id) {
+                        id
+                        title
+                        content
+                        icon
+                        color
+                        url
+                        createdAt
+                        updatedAt
+                        creator { name email }
+                        project { id name }
+                    }
+                }
+            "#;
+            let result = client.query(query, Some(json!({ "id": id }))).await?;
+            let document = &result["data"]["document"];
+            if !document.is_null() {
+                docs.push(document.clone());
+            }
+        }
+        print_json(&serde_json::json!(docs), &output.json)?;
+        return Ok(());
+    }
+
+    for (idx, id) in ids.iter().enumerate() {
+        if idx > 0 {
+            println!();
+        }
+        get_document(id, output).await?;
     }
 
     Ok(())
@@ -239,6 +331,7 @@ async fn create_document(
     content: Option<String>,
     icon: Option<String>,
     color: Option<String>,
+    output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
@@ -272,6 +365,10 @@ async fn create_document(
 
     if result["data"]["documentCreate"]["success"].as_bool() == Some(true) {
         let document = &result["data"]["documentCreate"]["document"];
+        if output.is_json() {
+            print_json(document, &output.json)?;
+            return Ok(());
+        }
         println!(
             "{} Created document: {}",
             "+".green(),
@@ -293,6 +390,8 @@ async fn update_document(
     icon: Option<String>,
     color: Option<String>,
     project: Option<String>,
+    dry_run: bool,
+    output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
 
@@ -318,6 +417,25 @@ async fn update_document(
         return Ok(());
     }
 
+    if dry_run {
+        if output.is_json() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_update": {
+                        "id": id,
+                        "input": input,
+                    }
+                }),
+                &output.json,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would update document:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
     let mutation = r#"
         mutation($id: String!, $input: DocumentUpdateInput!) {
             documentUpdate(id: $id, input: $input) {
@@ -332,6 +450,10 @@ async fn update_document(
         .await?;
 
     if result["data"]["documentUpdate"]["success"].as_bool() == Some(true) {
+        if output.is_json() {
+            print_json(&result["data"]["documentUpdate"]["document"], &output.json)?;
+            return Ok(());
+        }
         println!("{} Document updated", "+".green());
     } else {
         anyhow::bail!("Failed to update document");
@@ -339,3 +461,5 @@ async fn update_document(
 
     Ok(())
 }
+
+
