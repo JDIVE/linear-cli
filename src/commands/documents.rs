@@ -383,6 +383,7 @@ async fn create_document(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_document(
     id: &str,
     title: Option<String>,
@@ -461,5 +462,3 @@ async fn update_document(
 
     Ok(())
 }
-
-

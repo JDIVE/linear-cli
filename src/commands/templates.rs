@@ -143,11 +143,8 @@ fn list_templates(output: &OutputOptions) -> Result<()> {
         return Ok(());
     }
 
-    let mut templates: Vec<serde_json::Value> = store
-        .templates
-        .values()
-        .map(|t| json!(t))
-        .collect();
+    let mut templates: Vec<serde_json::Value> =
+        store.templates.values().map(|t| json!(t)).collect();
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut templates, sort_key, output.json.order);
@@ -170,10 +167,7 @@ fn list_templates(output: &OutputOptions) -> Result<()> {
         .iter()
         .map(|t| TemplateRow {
             name: truncate(t["name"].as_str().unwrap_or(""), width),
-            title_prefix: truncate(
-                t["title_prefix"].as_str().unwrap_or("-"),
-                width,
-            ),
+            title_prefix: truncate(t["title_prefix"].as_str().unwrap_or("-"), width),
             team: truncate(t["team"].as_str().unwrap_or("-"), width),
             priority: priority_to_string(t["default_priority"].as_i64().map(|p| p as i32)),
             labels: {

@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::{json, Value};
-use tabled::{Table, Tabled};
 use std::io::BufRead;
+use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
@@ -234,10 +234,7 @@ async fn get_statuses(ids: &[String], team: &str, output: &OutputOptions) -> Res
     for id in ids {
         let status = states.iter().find(|s| {
             s["id"].as_str() == Some(id.as_str())
-                || s["name"]
-                    .as_str()
-                    .map(|n| n.to_lowercase())
-                    == Some(id.to_lowercase())
+                || s["name"].as_str().map(|n| n.to_lowercase()) == Some(id.to_lowercase())
         });
 
         if let Some(s) = status {

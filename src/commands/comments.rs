@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
-use tabled::{Table, Tabled};
 use std::io::BufRead;
+use tabled::{Table, Tabled};
 
 use crate::api::LinearClient;
 use crate::display_options;
@@ -55,20 +55,19 @@ pub async fn handle(cmd: CommentCommands, output: &OutputOptions) -> Result<()> 
 }
 
 async fn list_comments(issue_ids: &[String], output: &OutputOptions) -> Result<()> {
-    let final_ids: Vec<String> = if issue_ids.is_empty()
-        || (issue_ids.len() == 1 && issue_ids[0] == "-")
-    {
-        let stdin = std::io::stdin();
-        stdin
-            .lock()
-            .lines()
-            .map_while(Result::ok)
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.trim().to_string())
-            .collect()
-    } else {
-        issue_ids.to_vec()
-    };
+    let final_ids: Vec<String> =
+        if issue_ids.is_empty() || (issue_ids.len() == 1 && issue_ids[0] == "-") {
+            let stdin = std::io::stdin();
+            stdin
+                .lock()
+                .lines()
+                .map_while(Result::ok)
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string())
+                .collect()
+        } else {
+            issue_ids.to_vec()
+        };
 
     if final_ids.is_empty() {
         anyhow::bail!("No issue IDs provided. Provide IDs or pipe them via stdin.");

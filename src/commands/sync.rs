@@ -287,9 +287,9 @@ async fn status_command(
 
     if let Some(sort_key) = output.json.sort.as_deref() {
         match sort_key {
-            "name" => statuses.sort_by(|a, b| sync_name(a).cmp(&sync_name(b))),
-            "path" => statuses.sort_by(|a, b| sync_path(a).cmp(&sync_path(b))),
-            "type" => statuses.sort_by(|a, b| sync_type(a).cmp(&sync_type(b))),
+            "name" => statuses.sort_by_key(sync_name),
+            "path" => statuses.sort_by_key(sync_path),
+            "type" => statuses.sort_by_key(sync_type),
             _ => {}
         }
         if output.json.order == crate::output::SortOrder::Desc {
