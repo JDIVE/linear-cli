@@ -18,7 +18,10 @@ fn is_issue_identifier(value: &str) -> bool {
     if prefix.is_empty() || number.is_empty() {
         return false;
     }
-    if !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !prefix
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return false;
     }
     number.chars().all(|c| c.is_ascii_digit())
@@ -111,8 +114,10 @@ pub async fn resolve_issue_id(
     for _ in 0..2 {
         let mut after: Option<String> = None;
         let mut pages = 0usize;
+        let mut capped = false;
         loop {
             if pages >= max_pages {
+                capped = true;
                 break;
             }
             pages += 1;
@@ -156,11 +161,14 @@ pub async fn resolve_issue_id(
             }
         }
 
-        if pages >= max_pages {
-            anyhow::bail!(
-                "Issue not found after scanning {} results. Provide an issue ID or UUID.",
-                max_pages * 50
-            );
+        if include {
+            if capped {
+                anyhow::bail!(
+                    "Issue not found after scanning {} results. Provide an issue ID or UUID.",
+                    max_pages * 50
+                );
+            }
+            anyhow::bail!("Issue not found: {}", issue);
         }
 
         if include {
