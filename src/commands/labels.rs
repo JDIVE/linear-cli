@@ -4,7 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::paginate_nodes;
@@ -35,12 +35,39 @@ pub enum LabelCommands {
         /// Label type: issue or project
         #[arg(short, long, default_value = "project")]
         r#type: String,
+        /// Team name or ID (required for issue labels)
+        #[arg(long)]
+        team: Option<String>,
         /// Label color (hex)
         #[arg(short, long, default_value = "#6B7280")]
         color: String,
+        /// Label description (issue labels only)
+        #[arg(short, long)]
+        description: Option<String>,
         /// Parent label ID (for grouped labels)
         #[arg(short, long)]
         parent: Option<String>,
+    },
+    /// Update a label
+    #[command(after_help = r##"EXAMPLES:
+    linear labels update LABEL_ID -n "New Name"
+    linear l update LABEL_ID -c "#10B981"
+    linear l update LABEL_ID --type issue -d "For regressions""##)]
+    Update {
+        /// Label ID
+        id: String,
+        /// Label type: issue or project
+        #[arg(short, long, default_value = "project")]
+        r#type: String,
+        /// New label name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New color (hex)
+        #[arg(short, long)]
+        color: Option<String>,
+        /// New description (issue labels only)
+        #[arg(short, long)]
+        description: Option<String>,
     },
     /// Delete a label
     #[command(after_help = r#"EXAMPLES:
@@ -77,9 +104,18 @@ pub async fn handle(cmd: LabelCommands, output: &OutputOptions) -> Result<()> {
         LabelCommands::Create {
             name,
             r#type,
+            team,
             color,
+            description,
             parent,
-        } => create_label(&name, &r#type, &color, parent, output).await,
+        } => create_label(&name, &r#type, team, &color, description, parent, output).await,
+        LabelCommands::Update {
+            id,
+            r#type,
+            name,
+            color,
+            description,
+        } => update_label(&id, &r#type, name, color, description, output).await,
         LabelCommands::Delete { id, r#type, force } => delete_label(&id, &r#type, force).await,
     }
 }
@@ -182,7 +218,9 @@ async fn list_labels(label_type: &str, output: &OutputOptions) -> Result<()> {
 async fn create_label(
     name: &str,
     label_type: &str,
+    team: Option<String>,
     color: &str,
+    description: Option<String>,
     parent: Option<String>,
     output: &OutputOptions,
 ) -> Result<()> {
@@ -195,6 +233,17 @@ async fn create_label(
 
     if let Some(p) = parent {
         input["parentId"] = json!(p);
+    }
+    if let Some(desc) = description.clone() {
+        input["description"] = json!(desc);
+    }
+
+    if label_type == "issue" {
+        let team = team.ok_or_else(|| anyhow::anyhow!("--team is required for issue labels"))?;
+        let team_id = resolve_team_id(&client, &team).await?;
+        input["teamId"] = json!(team_id);
+    } else if description.is_some() {
+        anyhow::bail!("Description is only supported for issue labels.");
     }
 
     let mutation = if label_type == "project" {
@@ -297,6 +346,92 @@ async fn delete_label(id: &str, label_type: &str, force: bool) -> Result<()> {
         println!("{} Label deleted", "+".green());
     } else {
         anyhow::bail!("Failed to delete label");
+    }
+
+    Ok(())
+}
+
+async fn update_label(
+    id: &str,
+    label_type: &str,
+    name: Option<String>,
+    color: Option<String>,
+    description: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    if label_type == "project" && description.is_some() {
+        anyhow::bail!("Description is only supported for issue labels.");
+    }
+
+    let mut input = json!({});
+    if let Some(n) = name {
+        input["name"] = json!(n);
+    }
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(d) = description {
+        input["description"] = json!(d);
+    }
+
+    if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        println!("No updates specified.");
+        return Ok(());
+    }
+
+    let mutation = if label_type == "project" {
+        r#"
+            mutation($id: String!, $input: ProjectLabelUpdateInput!) {
+                projectLabelUpdate(id: $id, input: $input) {
+                    success
+                    projectLabel { id name color }
+                }
+            }
+        "#
+    } else {
+        r#"
+            mutation($id: String!, $input: IssueLabelUpdateInput!) {
+                issueLabelUpdate(id: $id, input: $input) {
+                    success
+                    issueLabel { id name color description }
+                }
+            }
+        "#
+    };
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .await?;
+
+    let key = if label_type == "project" {
+        "projectLabelUpdate"
+    } else {
+        "issueLabelUpdate"
+    };
+    let label_key = if label_type == "project" {
+        "projectLabel"
+    } else {
+        "issueLabel"
+    };
+
+    if result["data"][key]["success"].as_bool() == Some(true) {
+        let label = &result["data"][key][label_key];
+
+        if output.is_json() || output.has_template() {
+            print_json(label, output)?;
+            return Ok(());
+        }
+
+        println!(
+            "{} Updated {} label: {}",
+            "+".green(),
+            label_type,
+            label["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to update label");
     }
 
     Ok(())

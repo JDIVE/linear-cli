@@ -29,6 +29,50 @@ pub enum StatusCommands {
         #[arg(short, long)]
         team: String,
     },
+    /// Create a new workflow state
+    #[command(after_help = r##"EXAMPLES:
+    linear statuses create -t ENG "Ready" --type unstarted
+    linear st create -t ENG "In QA" --type started -c "#F59E0B""##)]
+    Create {
+        /// Team name or ID
+        #[arg(short, long)]
+        team: String,
+        /// State name
+        name: String,
+        /// State type (backlog, unstarted, started, completed, canceled)
+        #[arg(short, long, default_value = "started")]
+        r#type: String,
+        /// State color (hex)
+        #[arg(short, long)]
+        color: Option<String>,
+        /// Position in the workflow
+        #[arg(long)]
+        position: Option<f64>,
+    },
+    /// Update an existing workflow state
+    #[command(after_help = r##"EXAMPLES:
+    linear statuses update STATE_ID -n "Ready for QA"
+    linear st update STATE_ID -c "#10B981" --position 4"##)]
+    Update {
+        /// State ID
+        id: String,
+        /// New name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New color (hex)
+        #[arg(short, long)]
+        color: Option<String>,
+        /// New position
+        #[arg(long)]
+        position: Option<f64>,
+    },
+    /// Archive a workflow state
+    #[command(after_help = r#"EXAMPLE:
+    linear statuses archive STATE_ID"#)]
+    Archive {
+        /// State ID
+        id: String,
+    },
 }
 
 #[derive(Tabled)]
@@ -66,6 +110,20 @@ pub async fn handle(cmd: StatusCommands, output: &OutputOptions) -> Result<()> {
             }
             get_statuses(&final_ids, &team, output).await
         }
+        StatusCommands::Create {
+            team,
+            name,
+            r#type,
+            color,
+            position,
+        } => create_status(&team, &name, &r#type, color, position, output).await,
+        StatusCommands::Update {
+            id,
+            name,
+            color,
+            position,
+        } => update_status(&id, name, color, position, output).await,
+        StatusCommands::Archive { id } => archive_status(&id, output).await,
     }
 }
 
@@ -307,6 +365,164 @@ async fn get_statuses(ids: &[String], team: &str, output: &OutputOptions) -> Res
             }
         }
         println!("ID: {}", status["id"].as_str().unwrap_or("-"));
+    }
+
+    Ok(())
+}
+
+fn normalize_state_type(value: &str) -> Result<&'static str> {
+    match value.to_lowercase().as_str() {
+        "backlog" => Ok("backlog"),
+        "unstarted" => Ok("unstarted"),
+        "started" => Ok("started"),
+        "completed" => Ok("completed"),
+        "canceled" | "cancelled" => Ok("canceled"),
+        _ => anyhow::bail!(
+            "Invalid state type '{}'. Use backlog, unstarted, started, completed, or canceled.",
+            value
+        ),
+    }
+}
+
+async fn create_status(
+    team: &str,
+    name: &str,
+    state_type: &str,
+    color: Option<String>,
+    position: Option<f64>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let team_id = resolve_team_id(&client, team).await?;
+    let normalized_type = normalize_state_type(state_type)?;
+
+    let mut input = json!({
+        "name": name,
+        "type": normalized_type,
+        "teamId": team_id
+    });
+
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(p) = position {
+        input["position"] = json!(p);
+    }
+
+    let mutation = r#"
+        mutation($input: WorkflowStateCreateInput!) {
+            workflowStateCreate(input: $input) {
+                success
+                workflowState { id name type color position }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
+
+    if result["data"]["workflowStateCreate"]["success"].as_bool() == Some(true) {
+        let state = &result["data"]["workflowStateCreate"]["workflowState"];
+
+        if output.is_json() || output.has_template() {
+            print_json(state, output)?;
+            return Ok(());
+        }
+
+        println!(
+            "{} Created status: {}",
+            "+".green(),
+            state["name"].as_str().unwrap_or("")
+        );
+        println!("  ID: {}", state["id"].as_str().unwrap_or(""));
+    } else {
+        anyhow::bail!("Failed to create status");
+    }
+
+    Ok(())
+}
+
+async fn update_status(
+    id: &str,
+    name: Option<String>,
+    color: Option<String>,
+    position: Option<f64>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mut input = json!({});
+    if let Some(n) = name {
+        input["name"] = json!(n);
+    }
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(p) = position {
+        input["position"] = json!(p);
+    }
+
+    if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        println!("No updates specified.");
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: WorkflowStateUpdateInput!) {
+            workflowStateUpdate(id: $id, input: $input) {
+                success
+                workflowState { id name type color position }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .await?;
+
+    if result["data"]["workflowStateUpdate"]["success"].as_bool() == Some(true) {
+        let state = &result["data"]["workflowStateUpdate"]["workflowState"];
+
+        if output.is_json() || output.has_template() {
+            print_json(state, output)?;
+            return Ok(());
+        }
+
+        println!(
+            "{} Updated status: {}",
+            "+".green(),
+            state["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to update status");
+    }
+
+    Ok(())
+}
+
+async fn archive_status(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mutation = r#"
+        mutation($id: String!) {
+            workflowStateArchive(id: $id) {
+                success
+            }
+        }
+    "#;
+
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["workflowStateArchive"]["success"].as_bool() == Some(true) {
+        if output.is_json() || output.has_template() {
+            print_json(&json!({ "archived": true, "id": id }), output)?;
+            return Ok(());
+        }
+
+        println!("{} Status archived", "+".green());
+    } else {
+        anyhow::bail!("Failed to archive status");
     }
 
     Ok(())

@@ -5,7 +5,7 @@ use serde_json::json;
 use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
-use crate::api::{resolve_team_id, LinearClient};
+use crate::api::{resolve_project_id, resolve_project_status_id, resolve_team_id, LinearClient};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::paginate_nodes;
@@ -46,32 +46,56 @@ pub enum ProjectCommands {
         /// Team name or ID
         #[arg(short, long)]
         team: String,
-        /// Project description
+        /// Project summary (short description)
         #[arg(short, long)]
         description: Option<String>,
+        /// Project content (long-form markdown)
+        #[arg(long)]
+        content: Option<String>,
         /// Project color (hex)
         #[arg(short, long)]
         color: Option<String>,
+        /// Project start date (YYYY-MM-DD)
+        #[arg(long)]
+        start_date: Option<String>,
+        /// Project target date (YYYY-MM-DD)
+        #[arg(long)]
+        target_date: Option<String>,
+        /// Project status name or type (planned, started, paused, completed, canceled)
+        #[arg(long)]
+        status: Option<String>,
     },
     /// Update a project
     #[command(after_help = r#"EXAMPLES:
     linear projects update ID -n "New Name"    # Rename project
     linear p update ID -d "New description"    # Update description"#)]
     Update {
-        /// Project ID
+        /// Project ID or name
         id: String,
         /// New name
         #[arg(short, long)]
         name: Option<String>,
-        /// New description
+        /// New summary (short description)
         #[arg(short, long)]
         description: Option<String>,
+        /// New content (long-form markdown)
+        #[arg(long)]
+        content: Option<String>,
         /// New color (hex)
         #[arg(short, long)]
         color: Option<String>,
         /// New icon
         #[arg(short, long)]
         icon: Option<String>,
+        /// New start date (YYYY-MM-DD)
+        #[arg(long)]
+        start_date: Option<String>,
+        /// New target date (YYYY-MM-DD)
+        #[arg(long)]
+        target_date: Option<String>,
+        /// New project status name or type
+        #[arg(long)]
+        status: Option<String>,
         /// Preview without updating (dry run)
         #[arg(long)]
         dry_run: bool,
@@ -98,6 +122,47 @@ pub enum ProjectCommands {
         #[arg(required = true)]
         labels: Vec<String>,
     },
+    /// Archive a project
+    #[command(after_help = r#"EXAMPLE:
+    linear projects archive PROJECT_ID"#)]
+    Archive {
+        /// Project ID or name
+        id: String,
+    },
+    /// Unarchive a project
+    #[command(after_help = r#"EXAMPLE:
+    linear projects unarchive PROJECT_ID"#)]
+    Unarchive {
+        /// Project ID or name
+        id: String,
+    },
+    /// Manage project updates (status posts)
+    #[command(alias = "updates")]
+    Updates {
+        #[command(subcommand)]
+        action: ProjectUpdateCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectUpdateCommands {
+    /// List project updates
+    #[command(alias = "ls")]
+    List {
+        /// Project ID or name
+        project: String,
+    },
+    /// Create a project update
+    Create {
+        /// Project ID or name
+        project: String,
+        /// Update body (Markdown supported). Use "-" to read from stdin.
+        #[arg(short, long)]
+        body: String,
+        /// Health (onTrack, atRisk, offTrack)
+        #[arg(long)]
+        health: Option<String>,
+    },
 }
 
 #[derive(Tabled)]
@@ -108,6 +173,20 @@ struct ProjectRow {
     status: String,
     #[tabled(rename = "Labels")]
     labels: String,
+    #[tabled(rename = "ID")]
+    id: String,
+}
+
+#[derive(Tabled)]
+struct ProjectUpdateRow {
+    #[tabled(rename = "Created")]
+    created_at: String,
+    #[tabled(rename = "Health")]
+    health: String,
+    #[tabled(rename = "Author")]
+    author: String,
+    #[tabled(rename = "Body")]
+    body: String,
     #[tabled(rename = "ID")]
     id: String,
 }
@@ -137,22 +216,246 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             name,
             team,
             description,
+            content,
             color,
-        } => create_project(&name, &team, description, color, output).await,
+            start_date,
+            target_date,
+            status,
+        } => {
+            create_project(
+                &name,
+                &team,
+                description,
+                content,
+                color,
+                start_date,
+                target_date,
+                status,
+                output,
+            )
+            .await
+        }
         ProjectCommands::Update {
             id,
             name,
             description,
+            content,
             color,
             icon,
+            start_date,
+            target_date,
+            status,
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run;
-            update_project(&id, name, description, color, icon, dry_run, output).await
+            update_project(
+                &id,
+                name,
+                description,
+                content,
+                color,
+                icon,
+                start_date,
+                target_date,
+                status,
+                dry_run,
+                output,
+            )
+            .await
         }
         ProjectCommands::Delete { id, force } => delete_project(&id, force).await,
         ProjectCommands::AddLabels { id, labels } => add_labels(&id, labels, output).await,
+        ProjectCommands::Archive { id } => archive_project(&id, output).await,
+        ProjectCommands::Unarchive { id } => unarchive_project(&id, output).await,
+        ProjectCommands::Updates { action } => handle_project_updates(action, output).await,
     }
+}
+
+async fn handle_project_updates(cmd: ProjectUpdateCommands, output: &OutputOptions) -> Result<()> {
+    match cmd {
+        ProjectUpdateCommands::List { project } => list_project_updates(&project, output).await,
+        ProjectUpdateCommands::Create {
+            project,
+            body,
+            health,
+        } => create_project_update(&project, &body, health, output).await,
+    }
+}
+
+fn normalize_project_health(value: &str) -> Result<&'static str> {
+    match value.to_lowercase().as_str() {
+        "ontrack" | "on-track" | "on_track" => Ok("onTrack"),
+        "atrisk" | "at-risk" | "at_risk" => Ok("atRisk"),
+        "offtrack" | "off-track" | "off_track" => Ok("offTrack"),
+        _ => anyhow::bail!(
+            "Invalid health '{}'. Use onTrack, atRisk, or offTrack.",
+            value
+        ),
+    }
+}
+
+async fn list_project_updates(project: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, project, true).await?;
+
+    let meta_query = r#"
+        query($id: String!) {
+            project(id: $id) { id name }
+        }
+    "#;
+    let meta_result = client
+        .query(meta_query, Some(json!({ "id": project_id })))
+        .await?;
+    let project_data = &meta_result["data"]["project"];
+
+    if project_data.is_null() {
+        anyhow::bail!("Project not found: {}", project);
+    }
+
+    let query = r#"
+        query($id: String!, $first: Int, $after: String, $last: Int, $before: String) {
+            project(id: $id) {
+                projectUpdates(first: $first, after: $after, last: $last, before: $before) {
+                    nodes {
+                        id
+                        body
+                        health
+                        createdAt
+                        updatedAt
+                        url
+                        user { name }
+                    }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }
+                }
+            }
+        }
+    "#;
+
+    let mut vars = serde_json::Map::new();
+    vars.insert("id".to_string(), json!(project_id));
+    let pagination = output.pagination.with_default_limit(50);
+    let mut updates = paginate_nodes(
+        &client,
+        query,
+        vars,
+        &["data", "project", "projectUpdates", "nodes"],
+        &["data", "project", "projectUpdates", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
+
+    if output.is_json() || output.has_template() {
+        print_json(
+            &json!({
+                "project": project_data,
+                "updates": updates
+            }),
+            output,
+        )?;
+        return Ok(());
+    }
+
+    filter_values(&mut updates, &output.filters);
+    if let Some(sort_key) = output.json.sort.as_deref() {
+        sort_values(&mut updates, sort_key, output.json.order);
+    }
+
+    ensure_non_empty(&updates, output)?;
+    if updates.is_empty() {
+        println!("No updates found for project.");
+        return Ok(());
+    }
+
+    let width = display_options().max_width(60);
+    let rows: Vec<ProjectUpdateRow> = updates
+        .iter()
+        .map(|u| ProjectUpdateRow {
+            created_at: u["createdAt"].as_str().unwrap_or("-").to_string(),
+            health: u["health"].as_str().unwrap_or("-").to_string(),
+            author: u["user"]["name"].as_str().unwrap_or("-").to_string(),
+            body: truncate(u["body"].as_str().unwrap_or(""), width),
+            id: u["id"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
+
+    println!(
+        "{}",
+        format!(
+            "Project updates for {}",
+            project_data["name"].as_str().unwrap_or("")
+        )
+        .bold()
+    );
+    println!("{}", "-".repeat(50));
+    let table = Table::new(rows).to_string();
+    println!("{}", table);
+    println!("\n{} updates", updates.len());
+
+    Ok(())
+}
+
+async fn create_project_update(
+    project: &str,
+    body: &str,
+    health: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, project, true).await?;
+
+    let final_body = if body == "-" {
+        let stdin = io::stdin();
+        let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
+        lines.join("\n")
+    } else {
+        body.to_string()
+    };
+
+    let mut input = json!({
+        "projectId": project_id,
+        "body": final_body
+    });
+
+    if let Some(h) = health {
+        let normalized = normalize_project_health(&h)?;
+        input["health"] = json!(normalized);
+    }
+
+    let mutation = r#"
+        mutation($input: ProjectUpdateCreateInput!) {
+            projectUpdateCreate(input: $input) {
+                success
+                projectUpdate { id body health url createdAt }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
+
+    if result["data"]["projectUpdateCreate"]["success"].as_bool() == Some(true) {
+        let update = &result["data"]["projectUpdateCreate"]["projectUpdate"];
+
+        if output.is_json() || output.has_template() {
+            print_json(update, output)?;
+            return Ok(());
+        }
+
+        println!("{} Project update created", "+".green());
+        println!("  ID: {}", update["id"].as_str().unwrap_or(""));
+        println!("  URL: {}", update["url"].as_str().unwrap_or(""));
+    } else {
+        anyhow::bail!("Failed to create project update");
+    }
+
+    Ok(())
 }
 
 async fn list_projects(include_archived: bool, output: &OutputOptions) -> Result<()> {
@@ -374,7 +677,11 @@ async fn create_project(
     name: &str,
     team: &str,
     description: Option<String>,
+    content: Option<String>,
     color: Option<String>,
+    start_date: Option<String>,
+    target_date: Option<String>,
+    status: Option<String>,
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
@@ -390,8 +697,21 @@ async fn create_project(
     if let Some(desc) = description {
         input["description"] = json!(desc);
     }
+    if let Some(body) = content {
+        input["content"] = json!(body);
+    }
     if let Some(c) = color {
         input["color"] = json!(c);
+    }
+    if let Some(start) = start_date {
+        input["startDate"] = json!(start);
+    }
+    if let Some(target) = target_date {
+        input["targetDate"] = json!(target);
+    }
+    if let Some(status_name) = status {
+        let status_id = resolve_project_status_id(&client, &status_name).await?;
+        input["statusId"] = json!(status_id);
     }
 
     let mutation = r#"
@@ -434,12 +754,17 @@ async fn update_project(
     id: &str,
     name: Option<String>,
     description: Option<String>,
+    content: Option<String>,
     color: Option<String>,
     icon: Option<String>,
+    start_date: Option<String>,
+    target_date: Option<String>,
+    status: Option<String>,
     dry_run: bool,
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, id, true).await?;
 
     let mut input = json!({});
     if let Some(n) = name {
@@ -448,11 +773,24 @@ async fn update_project(
     if let Some(d) = description {
         input["description"] = json!(d);
     }
+    if let Some(body) = content {
+        input["content"] = json!(body);
+    }
     if let Some(c) = color {
         input["color"] = json!(c);
     }
     if let Some(i) = icon {
         input["icon"] = json!(i);
+    }
+    if let Some(start) = start_date {
+        input["startDate"] = json!(start);
+    }
+    if let Some(target) = target_date {
+        input["targetDate"] = json!(target);
+    }
+    if let Some(status_name) = status {
+        let status_id = resolve_project_status_id(&client, &status_name).await?;
+        input["statusId"] = json!(status_id);
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -489,7 +827,7 @@ async fn update_project(
     "#;
 
     let result = client
-        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .mutate(mutation, Some(json!({ "id": project_id, "input": input })))
         .await?;
 
     if result["data"]["projectUpdate"]["success"].as_bool() == Some(true) {
@@ -509,6 +847,66 @@ async fn update_project(
     Ok(())
 }
 
+async fn archive_project(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, id, true).await?;
+
+    let mutation = r#"
+        mutation($id: String!) {
+            projectArchive(id: $id) {
+                success
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": project_id })))
+        .await?;
+
+    if result["data"]["projectArchive"]["success"].as_bool() == Some(true) {
+        if output.is_json() || output.has_template() {
+            print_json(&json!({ "archived": true, "id": project_id }), output)?;
+            return Ok(());
+        }
+
+        println!("{} Project archived", "+".green());
+    } else {
+        anyhow::bail!("Failed to archive project");
+    }
+
+    Ok(())
+}
+
+async fn unarchive_project(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, id, true).await?;
+
+    let mutation = r#"
+        mutation($id: String!) {
+            projectUnarchive(id: $id) {
+                success
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": project_id })))
+        .await?;
+
+    if result["data"]["projectUnarchive"]["success"].as_bool() == Some(true) {
+        if output.is_json() || output.has_template() {
+            print_json(&json!({ "archived": false, "id": project_id }), output)?;
+            return Ok(());
+        }
+
+        println!("{} Project unarchived", "+".green());
+    } else {
+        anyhow::bail!("Failed to unarchive project");
+    }
+
+    Ok(())
+}
+
 async fn delete_project(id: &str, force: bool) -> Result<()> {
     if !force {
         println!("Are you sure you want to delete project {}?", id);
@@ -517,6 +915,7 @@ async fn delete_project(id: &str, force: bool) -> Result<()> {
     }
 
     let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, id, true).await?;
 
     let mutation = r#"
         mutation($id: String!) {
@@ -526,7 +925,9 @@ async fn delete_project(id: &str, force: bool) -> Result<()> {
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "id": project_id })))
+        .await?;
 
     if result["data"]["projectDelete"]["success"].as_bool() == Some(true) {
         println!("{} Project deleted", "+".green());
@@ -539,6 +940,7 @@ async fn delete_project(id: &str, force: bool) -> Result<()> {
 
 async fn add_labels(id: &str, label_ids: Vec<String>, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, id, true).await?;
 
     let mutation = r#"
         mutation($id: String!, $input: ProjectUpdateInput!) {
@@ -554,7 +956,7 @@ async fn add_labels(id: &str, label_ids: Vec<String>, output: &OutputOptions) ->
 
     let input = json!({ "labelIds": label_ids });
     let result = client
-        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .mutate(mutation, Some(json!({ "id": project_id, "input": input })))
         .await?;
 
     if result["data"]["projectUpdate"]["success"].as_bool() == Some(true) {
