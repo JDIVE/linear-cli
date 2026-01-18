@@ -11,6 +11,7 @@ pub mod issues;
 pub mod labels;
 pub mod notifications;
 pub mod projects;
+pub mod relations;
 pub mod search;
 pub mod statuses;
 pub mod sync;

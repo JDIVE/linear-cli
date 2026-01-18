@@ -15,10 +15,16 @@ linear-cli p list                              # List all projects
 linear-cli p list --archived                   # Include archived
 linear-cli p get PROJECT_ID                    # View project details
 linear-cli p create "Q1 Roadmap" -t Engineering
+linear-cli p create "Q1 Roadmap" -t Engineering --status started --start-date 2025-01-01
 linear-cli p update PROJECT_ID --name "New Name"
 linear-cli p update PROJECT_ID --name "New Name" --dry-run
+linear-cli p update PROJECT_ID --status completed --target-date 2025-03-31
 linear-cli p delete PROJECT_ID --force
+linear-cli p archive PROJECT_ID
+linear-cli p unarchive PROJECT_ID
 linear-cli p add-labels PROJECT_ID LABEL_ID
+linear-cli p updates list PROJECT_ID
+linear-cli p updates create PROJECT_ID -b "Status update" --health onTrack
 ```
 
 ## Issues
@@ -30,8 +36,10 @@ linear-cli i list --output json                # Output as JSON
 linear-cli i get LIN-123                       # View issue details
 linear-cli i get LIN-123 --output json         # JSON output
 linear-cli i create "Bug fix" -t Eng -p 1      # Priority: 1=urgent, 4=low
+linear-cli i create "Bug fix" -t Eng --project "Q1 Roadmap" --estimate 3 --due 2025-02-10
 cat issue.json | linear-cli i create "Bug fix" -t Eng --data -
 linear-cli i update LIN-123 -s Done
+linear-cli i update LIN-123 --labels Bug --project "Q1 Roadmap"
 linear-cli i update LIN-123 -s Done --dry-run
 linear-cli i delete LIN-123 --force
 linear-cli i start LIN-123                     # Start working: assigns to you, sets In Progress, creates branch
@@ -43,9 +51,11 @@ linear-cli i stop LIN-123                      # Stop working: unassigns, resets
 ```bash
 linear-cli l list                              # List project labels
 linear-cli l list --type issue                 # List issue labels
-linear-cli l create "Feature" --color "#10B981"
-linear-cli l create "Bug" --type issue --color "#EF4444"
+linear-cli l create "Feature" --color-hex "#10B981"
+linear-cli l create "Bug" --type issue --color-hex "#EF4444"
+linear-cli l create "Bug" --type issue --team ENG -d "Bug reports"
 linear-cli l delete LABEL_ID --force
+linear-cli l update LABEL_ID -n "New Name"
 ```
 
 ## Git Integration
@@ -105,6 +115,8 @@ linear-cli uploads fetch URL -f /tmp/screenshot.png
 # Teams
 linear-cli t list
 linear-cli t get TEAM_ID
+linear-cli t create "Engineering" -k ENG
+linear-cli t update ENG -d "Core team"
 
 # Users
 linear-cli u list
@@ -134,6 +146,9 @@ linear-cli tpl show bug --output json
 # Statuses
 linear-cli st list -t Engineering
 linear-cli st get "In Progress" -t Engineering
+linear-cli st create -t Engineering "Ready" --type unstarted
+linear-cli st update STATE_ID -c "#10B981"
+linear-cli st archive STATE_ID
 
 # Config
 linear-cli config set-key YOUR_API_KEY
@@ -190,4 +205,13 @@ linear-cli i list --no-color
 # Table width control
 linear-cli i list --width 80
 linear-cli i list --no-truncate
+```
+
+## Relations
+
+```bash
+linear-cli rel list LIN-123
+linear-cli rel add LIN-123 blocks LIN-124
+linear-cli rel remove LIN-123 blocked-by LIN-124
+linear-cli rel children LIN-123
 ```

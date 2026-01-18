@@ -6,7 +6,10 @@ use std::io::{self, BufRead};
 use std::process::Command;
 use tabled::{Table, Tabled};
 
-use crate::api::{resolve_team_id, LinearClient};
+use crate::api::{
+    resolve_issue_id, resolve_label_ids, resolve_project_id, resolve_state_id, resolve_team_id,
+    resolve_user_id, LinearClient,
+};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::paginate_nodes;
@@ -84,6 +87,18 @@ pub enum IssueCommands {
         /// Labels to add (can be specified multiple times)
         #[arg(short, long)]
         labels: Vec<String>,
+        /// Project name or ID
+        #[arg(long)]
+        project: Option<String>,
+        /// Estimate points
+        #[arg(long)]
+        estimate: Option<i32>,
+        /// Due date (YYYY-MM-DD)
+        #[arg(long)]
+        due: Option<String>,
+        /// Parent issue ID or identifier
+        #[arg(long)]
+        parent: Option<String>,
         /// Template name to use for default values
         #[arg(long)]
         template: Option<String>,
@@ -118,6 +133,21 @@ pub enum IssueCommands {
         /// New assignee (user ID, name, email, or "me")
         #[arg(short, long)]
         assignee: Option<String>,
+        /// New labels (replaces existing labels)
+        #[arg(short, long)]
+        labels: Vec<String>,
+        /// New project (name or ID)
+        #[arg(long)]
+        project: Option<String>,
+        /// New estimate points
+        #[arg(long)]
+        estimate: Option<i32>,
+        /// New due date (YYYY-MM-DD)
+        #[arg(long)]
+        due: Option<String>,
+        /// New parent issue ID or identifier
+        #[arg(long)]
+        parent: Option<String>,
         /// Preview without updating (dry run)
         #[arg(long)]
         dry_run: bool,
@@ -219,6 +249,10 @@ pub async fn handle(
             state,
             assignee,
             labels,
+            project,
+            estimate,
+            due,
+            parent,
             template,
             dry_run,
         } => {
@@ -295,6 +329,10 @@ pub async fn handle(
                 state,
                 assignee,
                 final_labels,
+                project,
+                estimate,
+                due,
+                parent,
                 output,
                 agent_opts,
                 dry_run,
@@ -309,6 +347,11 @@ pub async fn handle(
             priority,
             state,
             assignee,
+            labels,
+            project,
+            estimate,
+            due,
+            parent,
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run || agent_opts.dry_run;
@@ -335,6 +378,11 @@ pub async fn handle(
                 priority,
                 state,
                 assignee,
+                labels,
+                project,
+                estimate,
+                due,
+                parent,
                 dry_run,
                 output,
                 agent_opts,
@@ -663,6 +711,10 @@ async fn create_issue(
     state: Option<String>,
     assignee: Option<String>,
     labels: Vec<String>,
+    project: Option<String>,
+    estimate: Option<i32>,
+    due: Option<String>,
+    parent: Option<String>,
     output: &OutputOptions,
     agent_opts: AgentOptions,
     dry_run: bool,
@@ -695,12 +747,15 @@ async fn create_issue(
         input["priority"] = json!(p);
     }
     if let Some(ref s) = state {
-        input["stateId"] = json!(s);
+        let state_id = resolve_state_id(&client, &team_id, s).await?;
+        input["stateId"] = json!(state_id);
     }
     if let Some(ref a) = assignee {
-        input["assigneeId"] = json!(a);
+        let assignee_id = resolve_user_id(&client, a).await?;
+        input["assigneeId"] = json!(assignee_id);
     }
     if !labels.is_empty() {
+        let resolved = resolve_label_ids(&client, &team_id, &labels).await?;
         // Merge with template labels if present
         let existing: Vec<String> = input["labelIds"]
             .as_array()
@@ -711,8 +766,22 @@ async fn create_issue(
             })
             .unwrap_or_default();
         let mut all_labels = existing;
-        all_labels.extend(labels.clone());
+        all_labels.extend(resolved);
         input["labelIds"] = json!(all_labels);
+    }
+    if let Some(ref p) = project {
+        let project_id = resolve_project_id(&client, p, false).await?;
+        input["projectId"] = json!(project_id);
+    }
+    if let Some(points) = estimate {
+        input["estimate"] = json!(points);
+    }
+    if let Some(ref date) = due {
+        input["dueDate"] = json!(date);
+    }
+    if let Some(ref parent_id) = parent {
+        let resolved = resolve_issue_id(&client, parent_id, true).await?;
+        input["parentId"] = json!(resolved);
     }
 
     // Dry run: show what would be created without actually creating
@@ -730,6 +799,10 @@ async fn create_issue(
                         "state": state,
                         "assignee": assignee,
                         "labels": labels,
+                        "project": project,
+                        "estimate": estimate,
+                        "due": due,
+                        "parent": parent
                     }
                 }),
                 output,
@@ -757,6 +830,18 @@ async fn create_issue(
             }
             if !labels.is_empty() {
                 println!("  Labels:      {}", labels.join(", "));
+            }
+            if let Some(ref p) = project {
+                println!("  Project:     {}", p);
+            }
+            if let Some(points) = estimate {
+                println!("  Estimate:    {}", points);
+            }
+            if let Some(ref date) = due {
+                println!("  Due:         {}", date);
+            }
+            if let Some(ref parent_id) = parent {
+                println!("  Parent:      {}", parent_id);
             }
         }
         return Ok(());
@@ -827,11 +912,19 @@ async fn update_issue(
     priority: Option<i32>,
     state: Option<String>,
     assignee: Option<String>,
+    labels: Vec<String>,
+    project: Option<String>,
+    estimate: Option<i32>,
+    due: Option<String>,
+    parent: Option<String>,
     dry_run: bool,
     output: &OutputOptions,
     agent_opts: AgentOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
+
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+    let team_id = get_issue_team_id(&client, &issue_id).await?;
 
     let mut input = match data_json {
         Some(Value::Object(map)) => Value::Object(map),
@@ -849,10 +942,30 @@ async fn update_issue(
         input["priority"] = json!(p);
     }
     if let Some(s) = state {
-        input["stateId"] = json!(s);
+        let state_id = resolve_state_id(&client, &team_id, &s).await?;
+        input["stateId"] = json!(state_id);
     }
     if let Some(a) = assignee {
-        input["assigneeId"] = json!(a);
+        let assignee_id = resolve_user_id(&client, &a).await?;
+        input["assigneeId"] = json!(assignee_id);
+    }
+    if !labels.is_empty() {
+        let resolved = resolve_label_ids(&client, &team_id, &labels).await?;
+        input["labelIds"] = json!(resolved);
+    }
+    if let Some(p) = project {
+        let project_id = resolve_project_id(&client, &p, false).await?;
+        input["projectId"] = json!(project_id);
+    }
+    if let Some(points) = estimate {
+        input["estimate"] = json!(points);
+    }
+    if let Some(date) = due {
+        input["dueDate"] = json!(date);
+    }
+    if let Some(parent_id) = parent {
+        let resolved = resolve_issue_id(&client, &parent_id, true).await?;
+        input["parentId"] = json!(resolved);
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -894,7 +1007,7 @@ async fn update_issue(
     "#;
 
     let result = client
-        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .mutate(mutation, Some(json!({ "id": issue_id, "input": input })))
         .await?;
 
     if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
@@ -930,6 +1043,23 @@ async fn update_issue(
     }
 
     Ok(())
+}
+
+async fn get_issue_team_id(client: &LinearClient, issue_id: &str) -> Result<String> {
+    let query = r#"
+        query($id: String!) {
+            issue(id: $id) {
+                id
+                team { id }
+            }
+        }
+    "#;
+
+    let result = client.query(query, Some(json!({ "id": issue_id }))).await?;
+    let team_id = result["data"]["issue"]["team"]["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Could not resolve team for issue"))?;
+    Ok(team_id.to_string())
 }
 
 fn read_json_data(data: Option<&str>) -> Result<Option<Value>> {

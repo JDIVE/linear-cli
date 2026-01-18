@@ -42,7 +42,7 @@ pub enum DocumentCommands {
         #[arg(short, long)]
         icon: Option<String>,
         /// Icon color (hex color code)
-        #[arg(long)]
+        #[arg(long = "color-hex", id = "document_color")]
         color: Option<String>,
     },
     /// Update an existing document
@@ -59,7 +59,7 @@ pub enum DocumentCommands {
         #[arg(short, long)]
         icon: Option<String>,
         /// New color (hex)
-        #[arg(long)]
+        #[arg(long = "color-hex", id = "document_color")]
         color: Option<String>,
         /// New project ID
         #[arg(short, long)]

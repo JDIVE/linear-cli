@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
@@ -21,6 +21,47 @@ pub enum TeamCommands {
     Get {
         /// Team ID(s), key(s), or name(s). Use "-" to read from stdin.
         ids: Vec<String>,
+    },
+    /// Create a new team
+    #[command(after_help = r##"EXAMPLES:
+    linear teams create "Platform" -k PLT
+    linear t create "Engineering" -k ENG -d "Core dev team"
+    linear t create "Design" -k DSG -c "#FF5733" --icon "palette""##)]
+    Create {
+        /// Team name
+        name: String,
+        /// Team key (e.g., ENG)
+        #[arg(short, long)]
+        key: String,
+        /// Team description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Team color (hex)
+        #[arg(short, long = "color-hex", id = "team_color")]
+        color: Option<String>,
+        /// Team icon
+        #[arg(long)]
+        icon: Option<String>,
+    },
+    /// Update an existing team
+    #[command(after_help = r##"EXAMPLES:
+    linear teams update ENG -n "Engineering"
+    linear t update ENG -d "Updated description" -c "#10B981""##)]
+    Update {
+        /// Team ID, key, or name
+        id: String,
+        /// New team name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// New color (hex)
+        #[arg(short, long = "color-hex", id = "team_color")]
+        color: Option<String>,
+        /// New icon
+        #[arg(long)]
+        icon: Option<String>,
     },
 }
 
@@ -55,6 +96,20 @@ pub async fn handle(cmd: TeamCommands, output: &OutputOptions) -> Result<()> {
             }
             get_teams(&final_ids, output).await
         }
+        TeamCommands::Create {
+            name,
+            key,
+            description,
+            color,
+            icon,
+        } => create_team(&name, &key, description, color, icon, output).await,
+        TeamCommands::Update {
+            id,
+            name,
+            description,
+            color,
+            icon,
+        } => update_team(&id, name, description, color, icon, output).await,
     }
 }
 
@@ -295,6 +350,130 @@ async fn get_teams(ids: &[String], output: &OutputOptions) -> Result<()> {
                 eprintln!("{} Error fetching {}: {}", "!".red(), id, e);
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn create_team(
+    name: &str,
+    key: &str,
+    description: Option<String>,
+    color: Option<String>,
+    icon: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mut input = json!({
+        "name": name,
+        "key": key.to_uppercase(),
+    });
+
+    if let Some(desc) = description {
+        input["description"] = json!(desc);
+    }
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(i) = icon {
+        input["icon"] = json!(i);
+    }
+
+    let mutation = r#"
+        mutation($input: TeamCreateInput!) {
+            teamCreate(input: $input) {
+                success
+                team { id key name description color icon }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
+
+    if result["data"]["teamCreate"]["success"].as_bool() == Some(true) {
+        let team = &result["data"]["teamCreate"]["team"];
+
+        if output.is_json() || output.has_template() {
+            print_json(team, output)?;
+            return Ok(());
+        }
+
+        println!(
+            "{} Created team: {} ({})",
+            "+".green(),
+            team["name"].as_str().unwrap_or(""),
+            team["key"].as_str().unwrap_or("")
+        );
+        println!("  ID: {}", team["id"].as_str().unwrap_or(""));
+    } else {
+        anyhow::bail!("Failed to create team");
+    }
+
+    Ok(())
+}
+
+async fn update_team(
+    id: &str,
+    name: Option<String>,
+    description: Option<String>,
+    color: Option<String>,
+    icon: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let team_id = resolve_team_id(&client, id).await?;
+
+    let mut input = json!({});
+    if let Some(n) = name {
+        input["name"] = json!(n);
+    }
+    if let Some(d) = description {
+        input["description"] = json!(d);
+    }
+    if let Some(c) = color {
+        input["color"] = json!(c);
+    }
+    if let Some(i) = icon {
+        input["icon"] = json!(i);
+    }
+
+    if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        println!("No updates specified.");
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: TeamUpdateInput!) {
+            teamUpdate(id: $id, input: $input) {
+                success
+                team { id key name description color icon }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": team_id, "input": input })))
+        .await?;
+
+    if result["data"]["teamUpdate"]["success"].as_bool() == Some(true) {
+        let team = &result["data"]["teamUpdate"]["team"];
+
+        if output.is_json() || output.has_template() {
+            print_json(team, output)?;
+            return Ok(());
+        }
+
+        println!(
+            "{} Updated team: {} ({})",
+            "+".green(),
+            team["name"].as_str().unwrap_or(""),
+            team["key"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to update team");
     }
 
     Ok(())

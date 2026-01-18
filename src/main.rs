@@ -12,7 +12,8 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use commands::{
     auth, bulk, comments, cycles, doctor, documents, git, interactive, issues, labels,
-    notifications, projects, search, statuses, sync, teams, templates, time, uploads, users,
+    notifications, projects, relations, search, statuses, sync, teams, templates, time, uploads,
+    users,
 };
 use error::CliError;
 use output::print_json;
@@ -278,12 +279,22 @@ enum Commands {
         #[command(subcommand)]
         action: issues::IssueCommands,
     },
+    /// Manage issue relations - blocks, duplicates, related, and children
+    #[command(alias = "rel")]
+    #[command(after_help = r#"EXAMPLES:
+    linear relations list ENG-1
+    linear rel add ENG-1 blocks ENG-2
+    linear rel remove ENG-1 blocked-by ENG-2"#)]
+    Relations {
+        #[command(subcommand)]
+        action: relations::RelationCommands,
+    },
     /// Manage labels - create and organize project/issue labels
     #[command(alias = "l")]
     #[command(after_help = r##"EXAMPLES:
     linear labels list                      # List project labels
     linear l list --type issue              # List issue labels
-    linear l create "Feature" --color "#10B981"
+    linear l create "Feature" --color-hex "#10B981"
     linear l delete LABEL_ID --force"##)]
     Labels {
         #[command(subcommand)]
@@ -719,6 +730,7 @@ async fn run_command(
         }
         Commands::Projects { action } => projects::handle(action, output).await?,
         Commands::Issues { action } => issues::handle(action, output, agent_opts).await?,
+        Commands::Relations { action } => relations::handle(action, output).await?,
         Commands::Labels { action } => labels::handle(action, output).await?,
         Commands::Teams { action } => teams::handle(action, output).await?,
         Commands::Users { action } => users::handle(action, output).await?,

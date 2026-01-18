@@ -54,6 +54,7 @@ linear-cli g pr LIN-123
 |---------|-------|-------------|
 | `issues` | `i` | Manage issues |
 | `projects` | `p` | Manage projects |
+| `relations` | `rel` | Manage issue relations |
 | `git` | `g` | Git branch operations and PR creation |
 | `search` | `s` | Search issues and projects |
 | `comments` | `cm` | Manage issue comments |
@@ -155,5 +156,4 @@ Contributions welcome! Please open an issue or submit a pull request.
 ## License
 
 [MIT](LICENSE)
-
 
