@@ -221,6 +221,9 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
     let issue_id = resolve_issue_id(&client, issue, true).await?;
     let issue_data = fetch_issue_summary(&client, &issue_id, issue).await?;
     let pagination = output.pagination.with_default_limit(50);
+    let mut secondary_pagination = pagination.clone();
+    secondary_pagination.after = None;
+    secondary_pagination.before = None;
 
     let relations = paginate_issue_connection(
         &client,
@@ -254,7 +257,7 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
                 state { name }
             }
         "#,
-        &pagination,
+        &secondary_pagination,
     )
     .await?;
 
@@ -268,7 +271,7 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
             title
             state { name }
         "#,
-        &pagination,
+        &secondary_pagination,
     )
     .await?;
 

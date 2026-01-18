@@ -11,6 +11,19 @@ fn is_uuid(value: &str) -> bool {
     value.len() == 36 && value.chars().filter(|c| *c == '-').count() == 4
 }
 
+fn is_issue_identifier(value: &str) -> bool {
+    let mut parts = value.splitn(2, '-');
+    let prefix = parts.next().unwrap_or("");
+    let number = parts.next().unwrap_or("");
+    if prefix.is_empty() || number.is_empty() {
+        return false;
+    }
+    if !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    number.chars().all(|c| c.is_ascii_digit())
+}
+
 /// Resolves a team key (like "SCW") or name to a team UUID.
 /// If the input is already a UUID (36 characters with dashes), returns it as-is.
 pub async fn resolve_team_id(client: &LinearClient, team: &str) -> Result<String> {
@@ -74,6 +87,13 @@ pub async fn resolve_issue_id(
         return Ok(issue.to_string());
     }
 
+    if !is_issue_identifier(issue) {
+        anyhow::bail!(
+            "Invalid issue identifier '{}'. Use an identifier like ENG-123 or a UUID.",
+            issue
+        );
+    }
+
     let query = r#"
         query($term: String!, $includeArchived: Boolean, $first: Int, $after: String) {
             searchIssues(term: $term, includeArchived: $includeArchived, first: $first, after: $after) {
@@ -86,10 +106,16 @@ pub async fn resolve_issue_id(
         }
     "#;
 
+    let max_pages = 20;
     let mut include = include_archived;
     for _ in 0..2 {
         let mut after: Option<String> = None;
+        let mut pages = 0usize;
         loop {
+            if pages >= max_pages {
+                break;
+            }
+            pages += 1;
             let result = client
                 .query(
                     query,
@@ -128,6 +154,13 @@ pub async fn resolve_issue_id(
             if after.is_none() {
                 break;
             }
+        }
+
+        if pages >= max_pages {
+            anyhow::bail!(
+                "Issue not found after scanning {} results. Provide an issue ID or UUID.",
+                max_pages * 50
+            );
         }
 
         if include {
