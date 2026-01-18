@@ -75,12 +75,8 @@ pub async fn resolve_issue_id(
     }
 
     let query = r#"
-        query($identifier: String!, $includeArchived: Boolean) {
-            issues(
-                first: 1,
-                includeArchived: $includeArchived,
-                filter: { identifier: { eqIgnoreCase: $identifier } }
-            ) {
+        query($term: String!, $includeArchived: Boolean) {
+            searchIssues(term: $term, first: 10, includeArchived: $includeArchived) {
                 nodes { id identifier }
             }
         }
@@ -92,20 +88,26 @@ pub async fn resolve_issue_id(
             .query(
                 query,
                 Some(json!({
-                    "identifier": issue,
+                    "term": issue,
                     "includeArchived": include
                 })),
             )
             .await?;
 
         let empty = vec![];
-        let nodes = result["data"]["issues"]["nodes"]
+        let nodes = result["data"]["searchIssues"]["nodes"]
             .as_array()
             .unwrap_or(&empty);
 
-        if let Some(node) = nodes.first() {
-            if let Some(id) = node["id"].as_str() {
-                return Ok(id.to_string());
+        for node in nodes {
+            if node["identifier"]
+                .as_str()
+                .map(|id| id.eq_ignore_ascii_case(issue))
+                == Some(true)
+            {
+                if let Some(id) = node["id"].as_str() {
+                    return Ok(id.to_string());
+                }
             }
         }
 

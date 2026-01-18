@@ -51,8 +51,8 @@ linear-cli i stop LIN-123                      # Stop working: unassigns, resets
 ```bash
 linear-cli l list                              # List project labels
 linear-cli l list --type issue                 # List issue labels
-linear-cli l create "Feature" --color "#10B981"
-linear-cli l create "Bug" --type issue --color "#EF4444"
+linear-cli l create "Feature" --color-hex "#10B981"
+linear-cli l create "Bug" --type issue --color-hex "#EF4444"
 linear-cli l create "Bug" --type issue --team ENG -d "Bug reports"
 linear-cli l delete LABEL_ID --force
 linear-cli l update LABEL_ID -n "New Name"

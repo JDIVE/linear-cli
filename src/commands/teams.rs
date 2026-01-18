@@ -37,7 +37,7 @@ pub enum TeamCommands {
         #[arg(short, long)]
         description: Option<String>,
         /// Team color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "team_color")]
         color: Option<String>,
         /// Team icon
         #[arg(long)]
@@ -57,7 +57,7 @@ pub enum TeamCommands {
         #[arg(short, long)]
         description: Option<String>,
         /// New color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "team_color")]
         color: Option<String>,
         /// New icon
         #[arg(long)]

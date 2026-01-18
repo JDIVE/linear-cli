@@ -39,7 +39,7 @@ pub enum LabelCommands {
         #[arg(long)]
         team: Option<String>,
         /// Label color (hex)
-        #[arg(short, long, default_value = "#6B7280")]
+        #[arg(short, long = "color-hex", default_value = "#6B7280", id = "label_color")]
         color: String,
         /// Label description (issue labels only)
         #[arg(short, long)]
@@ -63,7 +63,7 @@ pub enum LabelCommands {
         #[arg(short, long)]
         name: Option<String>,
         /// New color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "label_color")]
         color: Option<String>,
         /// New description (issue labels only)
         #[arg(short, long)]

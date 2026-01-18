@@ -53,7 +53,7 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// Project color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "project_color")]
         color: Option<String>,
         /// Project start date (YYYY-MM-DD)
         #[arg(long)]
@@ -82,7 +82,7 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// New color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "project_color")]
         color: Option<String>,
         /// New icon
         #[arg(short, long)]
@@ -137,7 +137,6 @@ pub enum ProjectCommands {
         id: String,
     },
     /// Manage project updates (status posts)
-    #[command(alias = "updates")]
     Updates {
         #[command(subcommand)]
         action: ProjectUpdateCommands,

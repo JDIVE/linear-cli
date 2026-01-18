@@ -40,10 +40,10 @@ pub enum StatusCommands {
         /// State name
         name: String,
         /// State type (backlog, unstarted, started, completed, canceled)
-        #[arg(short, long, default_value = "started")]
+        #[arg(long, default_value = "started")]
         r#type: String,
         /// State color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "status_color")]
         color: Option<String>,
         /// Position in the workflow
         #[arg(long)]
@@ -60,7 +60,7 @@ pub enum StatusCommands {
         #[arg(short, long)]
         name: Option<String>,
         /// New color (hex)
-        #[arg(short, long)]
+        #[arg(short, long = "color-hex", id = "status_color")]
         color: Option<String>,
         /// New position
         #[arg(long)]

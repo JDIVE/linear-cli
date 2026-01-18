@@ -294,7 +294,7 @@ enum Commands {
     #[command(after_help = r##"EXAMPLES:
     linear labels list                      # List project labels
     linear l list --type issue              # List issue labels
-    linear l create "Feature" --color "#10B981"
+    linear l create "Feature" --color-hex "#10B981"
     linear l delete LABEL_ID --force"##)]
     Labels {
         #[command(subcommand)]
