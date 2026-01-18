@@ -75,39 +75,58 @@ pub async fn resolve_issue_id(
     }
 
     let query = r#"
-        query($term: String!, $includeArchived: Boolean) {
-            searchIssues(term: $term, first: 10, includeArchived: $includeArchived) {
+        query($term: String!, $includeArchived: Boolean, $first: Int, $after: String) {
+            searchIssues(term: $term, includeArchived: $includeArchived, first: $first, after: $after) {
                 nodes { id identifier }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
             }
         }
     "#;
 
     let mut include = include_archived;
     for _ in 0..2 {
-        let result = client
-            .query(
-                query,
-                Some(json!({
-                    "term": issue,
-                    "includeArchived": include
-                })),
-            )
-            .await?;
+        let mut after: Option<String> = None;
+        loop {
+            let result = client
+                .query(
+                    query,
+                    Some(json!({
+                        "term": issue,
+                        "includeArchived": include,
+                        "first": 50,
+                        "after": after
+                    })),
+                )
+                .await?;
 
-        let empty = vec![];
-        let nodes = result["data"]["searchIssues"]["nodes"]
-            .as_array()
-            .unwrap_or(&empty);
+            let empty = vec![];
+            let nodes = result["data"]["searchIssues"]["nodes"]
+                .as_array()
+                .unwrap_or(&empty);
 
-        for node in nodes {
-            if node["identifier"]
-                .as_str()
-                .map(|id| id.eq_ignore_ascii_case(issue))
-                == Some(true)
-            {
-                if let Some(id) = node["id"].as_str() {
-                    return Ok(id.to_string());
+            for node in nodes {
+                let identifier = node["identifier"].as_str().unwrap_or("");
+                if identifier.eq_ignore_ascii_case(issue) {
+                    if let Some(id) = node["id"].as_str() {
+                        return Ok(id.to_string());
+                    }
                 }
+            }
+
+            let page_info = &result["data"]["searchIssues"]["pageInfo"];
+            let has_next = page_info["hasNextPage"].as_bool().unwrap_or(false);
+            if !has_next {
+                break;
+            }
+
+            after = page_info["endCursor"]
+                .as_str()
+                .map(|s| s.to_string());
+            if after.is_none() {
+                break;
             }
         }
 

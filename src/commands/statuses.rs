@@ -504,6 +504,23 @@ async fn update_status(
 async fn archive_status(id: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": true,
+                    "id": id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would archive status:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
     let mutation = r#"
         mutation($id: String!) {
             workflowStateArchive(id: $id) {

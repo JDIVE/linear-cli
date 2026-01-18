@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_issue_id, LinearClient};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
+use crate::pagination::{paginate_nodes, PaginationOptions};
 use crate::text::truncate;
 
 #[derive(Subcommand)]
@@ -117,6 +118,14 @@ fn parse_relation_kind(value: &str) -> Result<RelationKind> {
     }
 }
 
+fn relation_kind_to_type(kind: RelationKind) -> &'static str {
+    match kind {
+        RelationKind::Blocks | RelationKind::BlockedBy => "blocks",
+        RelationKind::Duplicate | RelationKind::DuplicateOf => "duplicate",
+        RelationKind::Related => "related",
+    }
+}
+
 fn format_relation_type(kind: &str, inverse: bool) -> String {
     match kind {
         "blocks" => {
@@ -138,81 +147,140 @@ fn format_relation_type(kind: &str, inverse: bool) -> String {
     }
 }
 
-async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
-    let client = LinearClient::new()?;
-    let issue_id = resolve_issue_id(&client, issue, true).await?;
-
+async fn fetch_issue_summary(
+    client: &LinearClient,
+    issue_id: &str,
+    issue: &str,
+) -> Result<Value> {
     let query = r#"
         query($id: String!) {
             issue(id: $id) {
                 id
                 identifier
                 title
-                relations(first: 50) {
-                    nodes {
-                        id
-                        type
-                        relatedIssue {
-                            id
-                            identifier
-                            title
-                            state { name }
-                        }
-                    }
-                }
-                inverseRelations(first: 50) {
-                    nodes {
-                        id
-                        type
-                        issue {
-                            id
-                            identifier
-                            title
-                            state { name }
-                        }
-                    }
-                }
-                children(first: 50) {
-                    nodes {
-                        id
-                        identifier
-                        title
-                        state { name }
-                    }
-                }
             }
         }
     "#;
 
-    let result = client
-        .query(query, Some(json!({ "id": issue_id })))
-        .await?;
+    let result = client.query(query, Some(json!({ "id": issue_id }))).await?;
     let issue_data = &result["data"]["issue"];
 
     if issue_data.is_null() {
         anyhow::bail!("Issue not found: {}", issue);
     }
 
-    let empty = vec![];
-    let relations = issue_data["relations"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
-    let inverse = issue_data["inverseRelations"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
-    let children = issue_data["children"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
+    Ok(issue_data.clone())
+}
+
+async fn paginate_issue_connection(
+    client: &LinearClient,
+    issue_id: &str,
+    connection: &str,
+    fields: &str,
+    pagination: &PaginationOptions,
+) -> Result<Vec<Value>> {
+    let query = format!(
+        r#"
+        query($id: String!, $first: Int, $after: String, $last: Int, $before: String) {{
+            issue(id: $id) {{
+                {connection}(first: $first, after: $after, last: $last, before: $before) {{
+                    nodes {{
+                        {fields}
+                    }}
+                    pageInfo {{
+                        hasNextPage
+                        endCursor
+                        hasPreviousPage
+                        startCursor
+                    }}
+                }}
+            }}
+        }}
+    "#
+    );
+
+    let mut vars = Map::new();
+    vars.insert("id".to_string(), json!(issue_id));
+    let nodes_path = ["data", "issue", connection, "nodes"];
+    let page_info_path = ["data", "issue", connection, "pageInfo"];
+
+    paginate_nodes(
+        client,
+        &query,
+        vars,
+        &nodes_path,
+        &page_info_path,
+        pagination,
+        50,
+    )
+    .await
+}
+
+async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, issue, true).await?;
+    let issue_data = fetch_issue_summary(&client, &issue_id, issue).await?;
+    let pagination = output.pagination.with_default_limit(50);
+
+    let relations = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "relations",
+        r#"
+            id
+            type
+            relatedIssue {
+                id
+                identifier
+                title
+                state { name }
+            }
+        "#,
+        &pagination,
+    )
+    .await?;
+
+    let inverse = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "inverseRelations",
+        r#"
+            id
+            type
+            issue {
+                id
+                identifier
+                title
+                state { name }
+            }
+        "#,
+        &pagination,
+    )
+    .await?;
+
+    let children = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "children",
+        r#"
+            id
+            identifier
+            title
+            state { name }
+        "#,
+        &pagination,
+    )
+    .await?;
 
     let mut relation_rows: Vec<serde_json::Value> = Vec::new();
-    for rel in relations {
+    for rel in &relations {
         relation_rows.push(json!({
             "id": rel["id"],
             "type": format_relation_type(rel["type"].as_str().unwrap_or(""), false),
             "issue": rel["relatedIssue"],
         }));
     }
-    for rel in inverse {
+    for rel in &inverse {
         relation_rows.push(json!({
             "id": rel["id"],
             "type": format_relation_type(rel["type"].as_str().unwrap_or(""), true),
@@ -293,38 +361,21 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
 async fn list_children(issue: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, issue, true).await?;
-
-    let query = r#"
-        query($id: String!) {
-            issue(id: $id) {
-                id
-                identifier
-                title
-                children(first: 50) {
-                    nodes {
-                        id
-                        identifier
-                        title
-                        state { name }
-                    }
-                }
-            }
-        }
-    "#;
-
-    let result = client
-        .query(query, Some(json!({ "id": issue_id })))
-        .await?;
-    let issue_data = &result["data"]["issue"];
-
-    if issue_data.is_null() {
-        anyhow::bail!("Issue not found: {}", issue);
-    }
-
-    let empty = vec![];
-    let children = issue_data["children"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
+    let issue_data = fetch_issue_summary(&client, &issue_id, issue).await?;
+    let pagination = output.pagination.with_default_limit(50);
+    let children = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "children",
+        r#"
+            id
+            identifier
+            title
+            state { name }
+        "#,
+        &pagination,
+    )
+    .await?;
 
     if output.is_json() || output.has_template() {
         print_json(
@@ -380,13 +431,12 @@ async fn add_relation(
     let issue_id = resolve_issue_id(&client, issue, true).await?;
     let target_id = resolve_issue_id(&client, target, true).await?;
     let kind = parse_relation_kind(relation)?;
-
-    let (issue_id, related_issue_id, rel_type) = match kind {
-        RelationKind::Blocks => (issue_id, target_id, "blocks"),
-        RelationKind::BlockedBy => (target_id, issue_id, "blocks"),
-        RelationKind::Duplicate => (issue_id, target_id, "duplicate"),
-        RelationKind::DuplicateOf => (target_id, issue_id, "duplicate"),
-        RelationKind::Related => (issue_id, target_id, "related"),
+    let rel_type = relation_kind_to_type(kind);
+    let (issue_id, related_issue_id) = match kind {
+        RelationKind::Blocks | RelationKind::Duplicate | RelationKind::Related => {
+            (issue_id, target_id)
+        }
+        RelationKind::BlockedBy | RelationKind::DuplicateOf => (target_id, issue_id),
     };
 
     let mutation = r#"
@@ -404,6 +454,27 @@ async fn add_relation(
         "type": rel_type
     });
 
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_create": {
+                        "issue": issue,
+                        "target": target,
+                        "type": rel_type,
+                        "input": input,
+                    }
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would create relation:".yellow().bold());
+            println!("  {} {} {}", issue, relation, target);
+        }
+        return Ok(());
+    }
+
     let result = client
         .mutate(mutation, Some(json!({ "input": input })))
         .await?;
@@ -419,7 +490,12 @@ async fn add_relation(
         println!("{} Relation created", "+".green());
         println!("  ID: {}", relation["id"].as_str().unwrap_or(""));
     } else {
-        anyhow::bail!("Failed to create relation");
+        anyhow::bail!(
+            "Failed to create relation '{}' between {} and {}",
+            relation,
+            issue,
+            target
+        );
     }
 
     Ok(())
@@ -435,56 +511,44 @@ async fn remove_relation(
     let issue_id = resolve_issue_id(&client, issue, true).await?;
     let target_id = resolve_issue_id(&client, target, true).await?;
     let kind = parse_relation_kind(relation)?;
+    let _issue_data = fetch_issue_summary(&client, &issue_id, issue).await?;
+    let rel_type = relation_kind_to_type(kind);
+    let pagination = PaginationOptions {
+        all: true,
+        page_size: Some(50),
+        ..Default::default()
+    };
 
-    let query = r#"
-        query($id: String!) {
-            issue(id: $id) {
-                relations(first: 50) {
-                    nodes {
-                        id
-                        type
-                        relatedIssue { id }
-                    }
-                }
-                inverseRelations(first: 50) {
-                    nodes {
-                        id
-                        type
-                        issue { id }
-                    }
-                }
-            }
-        }
-    "#;
+    let relations = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "relations",
+        r#"
+            id
+            type
+            relatedIssue { id }
+        "#,
+        &pagination,
+    )
+    .await?;
 
-    let result = client
-        .query(query, Some(json!({ "id": issue_id })))
-        .await?;
-    let issue_data = &result["data"]["issue"];
-
-    if issue_data.is_null() {
-        anyhow::bail!("Issue not found: {}", issue);
-    }
-
-    let empty = vec![];
-    let relations = issue_data["relations"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
-    let inverse = issue_data["inverseRelations"]["nodes"]
-        .as_array()
-        .unwrap_or(&empty);
+    let inverse = paginate_issue_connection(
+        &client,
+        &issue_id,
+        "inverseRelations",
+        r#"
+            id
+            type
+            issue { id }
+        "#,
+        &pagination,
+    )
+    .await?;
 
     let mut relation_id: Option<String> = None;
     match kind {
         RelationKind::Blocks | RelationKind::Duplicate | RelationKind::Related => {
-            let rel_type = match kind {
-                RelationKind::Blocks => "blocks",
-                RelationKind::Duplicate => "duplicate",
-                RelationKind::Related => "related",
-                _ => "",
-            };
-
-            for rel in relations {
+            for rel in &relations {
                 let typ = rel["type"].as_str().unwrap_or("");
                 let related = rel["relatedIssue"]["id"].as_str().unwrap_or("");
                 if typ == rel_type && related == target_id {
@@ -494,10 +558,10 @@ async fn remove_relation(
             }
 
             if relation_id.is_none() && matches!(kind, RelationKind::Related) {
-                for rel in inverse {
+                for rel in &inverse {
                     let typ = rel["type"].as_str().unwrap_or("");
                     let related = rel["issue"]["id"].as_str().unwrap_or("");
-                    if typ == "related" && related == target_id {
+                    if typ == rel_type && related == target_id {
                         relation_id = rel["id"].as_str().map(|s| s.to_string());
                         break;
                     }
@@ -505,13 +569,7 @@ async fn remove_relation(
             }
         }
         RelationKind::BlockedBy | RelationKind::DuplicateOf => {
-            let rel_type = match kind {
-                RelationKind::BlockedBy => "blocks",
-                RelationKind::DuplicateOf => "duplicate",
-                _ => "",
-            };
-
-            for rel in inverse {
+            for rel in &inverse {
                 let typ = rel["type"].as_str().unwrap_or("");
                 let related = rel["issue"]["id"].as_str().unwrap_or("");
                 if typ == rel_type && related == target_id {
@@ -523,7 +581,12 @@ async fn remove_relation(
     }
 
     let relation_id = relation_id.ok_or_else(|| {
-        anyhow::anyhow!("No matching relation found between {} and {}", issue, target)
+        anyhow::anyhow!(
+            "No matching relation '{}' between {} and {}",
+            relation,
+            issue,
+            target
+        )
     })?;
 
     let mutation = r#"
@@ -533,6 +596,27 @@ async fn remove_relation(
             }
         }
     "#;
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_remove": {
+                        "issue": issue,
+                        "target": target,
+                        "relation": relation,
+                        "id": relation_id,
+                    }
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would remove relation:".yellow().bold());
+            println!("  {} {} {}", issue, relation, target);
+        }
+        return Ok(());
+    }
 
     let result = client
         .mutate(mutation, Some(json!({ "id": relation_id })))
@@ -546,7 +630,12 @@ async fn remove_relation(
 
         println!("{} Relation removed", "+".green());
     } else {
-        anyhow::bail!("Failed to remove relation");
+        anyhow::bail!(
+            "Failed to remove relation '{}' between {} and {}",
+            relation,
+            issue,
+            target
+        );
     }
 
     Ok(())

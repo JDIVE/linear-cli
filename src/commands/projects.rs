@@ -850,6 +850,23 @@ async fn archive_project(id: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let project_id = resolve_project_id(&client, id, true).await?;
 
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": true,
+                    "id": project_id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would archive project:".yellow().bold());
+            println!("  ID: {}", project_id);
+        }
+        return Ok(());
+    }
+
     let mutation = r#"
         mutation($id: String!) {
             projectArchive(id: $id) {
@@ -879,6 +896,23 @@ async fn archive_project(id: &str, output: &OutputOptions) -> Result<()> {
 async fn unarchive_project(id: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let project_id = resolve_project_id(&client, id, true).await?;
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": false,
+                    "id": project_id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would unarchive project:".yellow().bold());
+            println!("  ID: {}", project_id);
+        }
+        return Ok(());
+    }
 
     let mutation = r#"
         mutation($id: String!) {
