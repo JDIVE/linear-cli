@@ -46,6 +46,16 @@ linear-cli i start LIN-123                     # Start working: assigns to you, 
 linear-cli i stop LIN-123                      # Stop working: unassigns, resets status
 ```
 
+## Relations
+
+```bash
+linear-cli rel list LIN-123                    # List relations for an issue
+linear-cli rel add LIN-123 blocks LIN-456      # Add a relation
+linear-cli rel remove LIN-123 blocks LIN-456   # Remove a relation
+linear-cli rel children LIN-123                # List child issues
+linear-cli rel add LIN-123 relates-to LIN-456 --dry-run
+```
+
 ## Labels
 
 ```bash
