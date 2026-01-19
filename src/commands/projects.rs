@@ -140,6 +140,11 @@ pub enum ProjectCommands {
         /// Project ID or name
         id: String,
     },
+    /// Manage project statuses
+    Status {
+        #[command(subcommand)]
+        action: ProjectStatusCommands,
+    },
     /// Manage project updates (status posts)
     Updates {
         #[command(subcommand)]
@@ -165,6 +170,80 @@ pub enum ProjectUpdateCommands {
         /// Health (onTrack, atRisk, offTrack)
         #[arg(long)]
         health: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectStatusCommands {
+    /// List project statuses
+    #[command(alias = "ls")]
+    List {
+        /// Include archived statuses
+        #[arg(short, long)]
+        archived: bool,
+    },
+    /// Create a project status
+    #[command(after_help = r##"EXAMPLES:
+    linear projects status create "Blocked" --type started --position 4
+    linear p status create "On Hold" --type paused --position 5 --color-hex "#EF4444""##)]
+    Create {
+        /// Status name
+        name: String,
+        /// Status type (backlog, planned, started, paused, completed, canceled)
+        #[arg(long)]
+        r#type: String,
+        /// Position in the workflow
+        #[arg(long)]
+        position: f64,
+        /// Status color (hex)
+        #[arg(short, long = "color-hex", default_value = "#6B7280", id = "project_status_color")]
+        color: String,
+        /// Status description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Indefinite status (no end date)
+        #[arg(long)]
+        indefinite: bool,
+    },
+    /// Update a project status
+    #[command(after_help = r#"EXAMPLES:
+    linear projects status update STATUS_ID -n "Paused"
+    linear p status update STATUS_ID --type paused --position 6"#)]
+    Update {
+        /// Status ID
+        id: String,
+        /// New name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New type (backlog, planned, started, paused, completed, canceled)
+        #[arg(long)]
+        r#type: Option<String>,
+        /// New position
+        #[arg(long)]
+        position: Option<f64>,
+        /// New color (hex)
+        #[arg(short, long = "color-hex", id = "project_status_color")]
+        color: Option<String>,
+        /// New description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Toggle indefinite status
+        #[arg(long)]
+        indefinite: Option<bool>,
+    },
+    /// Archive a project status
+    #[command(after_help = r#"EXAMPLE:
+    linear projects status archive STATUS_ID"#)]
+    Archive {
+        /// Status ID
+        id: String,
+    },
+    /// Unarchive a project status
+    #[command(after_help = r#"EXAMPLE:
+    linear projects status unarchive STATUS_ID"#)]
+    Unarchive {
+        /// Status ID
+        id: String,
     },
 }
 
@@ -291,6 +370,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
         ProjectCommands::AddLabels { id, labels } => add_labels(&id, labels, output).await,
         ProjectCommands::Archive { id } => archive_project(&id, output).await,
         ProjectCommands::Unarchive { id } => unarchive_project(&id, output).await,
+        ProjectCommands::Status { action } => handle_project_status(action, output).await,
         ProjectCommands::Updates { action } => handle_project_updates(action, output).await,
     }
 }
@@ -306,6 +386,46 @@ async fn handle_project_updates(cmd: ProjectUpdateCommands, output: &OutputOptio
     }
 }
 
+async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOptions) -> Result<()> {
+    match cmd {
+        ProjectStatusCommands::List { archived } => list_project_statuses(archived, output).await,
+        ProjectStatusCommands::Create {
+            name,
+            r#type,
+            position,
+            color,
+            description,
+            indefinite,
+        } => {
+            create_project_status(&name, &r#type, position, &color, description, indefinite, output)
+                .await
+        }
+        ProjectStatusCommands::Update {
+            id,
+            name,
+            r#type,
+            position,
+            color,
+            description,
+            indefinite,
+        } => {
+            update_project_status(
+                &id,
+                name,
+                r#type,
+                position,
+                color,
+                description,
+                indefinite,
+                output,
+            )
+            .await
+        }
+        ProjectStatusCommands::Archive { id } => archive_project_status(&id, output).await,
+        ProjectStatusCommands::Unarchive { id } => unarchive_project_status(&id, output).await,
+    }
+}
+
 fn normalize_project_health(value: &str) -> Result<&'static str> {
     match value.to_lowercase().as_str() {
         "ontrack" | "on-track" | "on_track" => Ok("onTrack"),
@@ -313,6 +433,21 @@ fn normalize_project_health(value: &str) -> Result<&'static str> {
         "offtrack" | "off-track" | "off_track" => Ok("offTrack"),
         _ => anyhow::bail!(
             "Invalid health '{}'. Use onTrack, atRisk, or offTrack.",
+            value
+        ),
+    }
+}
+
+fn normalize_project_status_type(value: &str) -> Result<&'static str> {
+    match value.to_lowercase().as_str() {
+        "backlog" => Ok("backlog"),
+        "planned" => Ok("planned"),
+        "started" => Ok("started"),
+        "paused" => Ok("paused"),
+        "completed" => Ok("completed"),
+        "canceled" | "cancelled" => Ok("canceled"),
+        _ => anyhow::bail!(
+            "Invalid status type '{}'. Use backlog, planned, started, paused, completed, or canceled.",
             value
         ),
     }
@@ -631,6 +766,280 @@ async fn list_project_statuses(include_archived: bool, output: &OutputOptions) -
     let table = Table::new(rows).to_string();
     println!("{}", table);
     println!("\n{} statuses", statuses.len());
+
+    Ok(())
+}
+
+async fn create_project_status(
+    name: &str,
+    status_type: &str,
+    position: f64,
+    color: &str,
+    description: Option<String>,
+    indefinite: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let status_type = normalize_project_status_type(status_type)?;
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_create": {
+                        "name": name,
+                        "type": status_type,
+                        "position": position,
+                        "color": color,
+                        "description": description,
+                        "indefinite": indefinite,
+                    }
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would create project status:".yellow().bold());
+            println!("  Name: {}", name);
+        }
+        return Ok(());
+    }
+
+    let mut input = json!({
+        "name": name,
+        "type": status_type,
+        "position": position,
+        "color": color,
+        "indefinite": indefinite,
+    });
+
+    if let Some(desc) = description {
+        input["description"] = json!(desc);
+    }
+
+    let mutation = r#"
+        mutation($input: ProjectStatusCreateInput!) {
+            projectStatusCreate(input: $input) {
+                success
+                projectStatus {
+                    id
+                    name
+                    type
+                }
+            }
+        }
+    "#;
+
+    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    if result["data"]["projectStatusCreate"]["success"].as_bool() == Some(true) {
+        let status = &result["data"]["projectStatusCreate"]["projectStatus"];
+        if output.is_json() || output.has_template() {
+            print_json(status, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Created project status: {}",
+            "+".green(),
+            status["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to create project status");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn update_project_status(
+    id: &str,
+    name: Option<String>,
+    status_type: Option<String>,
+    position: Option<f64>,
+    color: Option<String>,
+    description: Option<String>,
+    indefinite: Option<bool>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mut input = json!({});
+    if let Some(name) = name {
+        input["name"] = json!(name);
+    }
+    if let Some(status_type) = status_type {
+        input["type"] = json!(normalize_project_status_type(&status_type)?);
+    }
+    if let Some(position) = position {
+        input["position"] = json!(position);
+    }
+    if let Some(color) = color {
+        input["color"] = json!(color);
+    }
+    if let Some(description) = description {
+        input["description"] = json!(description);
+    }
+    if let Some(indefinite) = indefinite {
+        input["indefinite"] = json!(indefinite);
+    }
+
+    if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        println!("No updates specified.");
+        return Ok(());
+    }
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_update": {
+                        "id": id,
+                        "input": input,
+                    }
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would update project status:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: ProjectStatusUpdateInput!) {
+            projectStatusUpdate(id: $id, input: $input) {
+                success
+                projectStatus {
+                    id
+                    name
+                    type
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .await?;
+    if result["data"]["projectStatusUpdate"]["success"].as_bool() == Some(true) {
+        let status = &result["data"]["projectStatusUpdate"]["projectStatus"];
+        if output.is_json() || output.has_template() {
+            print_json(status, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Updated project status: {}",
+            "+".green(),
+            status["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to update project status");
+    }
+
+    Ok(())
+}
+
+async fn archive_project_status(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": true,
+                    "id": id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would archive project status:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!) {
+            projectStatusArchive(id: $id) {
+                success
+                entity {
+                    id
+                    name
+                }
+            }
+        }
+    "#;
+
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+    if result["data"]["projectStatusArchive"]["success"].as_bool() == Some(true) {
+        let entity = &result["data"]["projectStatusArchive"]["entity"];
+        if output.is_json() || output.has_template() {
+            print_json(entity, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Project status archived: {}",
+            "+".green(),
+            entity["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to archive project status");
+    }
+
+    Ok(())
+}
+
+async fn unarchive_project_status(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    if output.dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": false,
+                    "id": id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would unarchive project status:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!) {
+            projectStatusUnarchive(id: $id) {
+                success
+                entity {
+                    id
+                    name
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": id })))
+        .await?;
+    if result["data"]["projectStatusUnarchive"]["success"].as_bool() == Some(true) {
+        let entity = &result["data"]["projectStatusUnarchive"]["entity"];
+        if output.is_json() || output.has_template() {
+            print_json(entity, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Project status unarchived: {}",
+            "+".green(),
+            entity["name"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to unarchive project status");
+    }
 
     Ok(())
 }

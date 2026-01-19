@@ -23,6 +23,9 @@ linear-cli p delete PROJECT_ID --force
 linear-cli p archive PROJECT_ID
 linear-cli p unarchive PROJECT_ID
 linear-cli p add-labels PROJECT_ID LABEL_ID
+linear-cli p status list
+linear-cli p status create "Blocked" --type started --position 4
+linear-cli p status update STATUS_ID --name "Paused"
 linear-cli p updates list PROJECT_ID
 linear-cli p updates create PROJECT_ID -b "Status update" --health onTrack
 ```
@@ -44,6 +47,9 @@ linear-cli i update LIN-123 -s Done --dry-run
 linear-cli i delete LIN-123 --force
 linear-cli i start LIN-123                     # Start working: assigns to you, sets In Progress, creates branch
 linear-cli i stop LIN-123                      # Stop working: unassigns, resets status
+linear-cli i remind LIN-123 --in 2d
+linear-cli i subscribe LIN-123
+linear-cli i unsubscribe LIN-123
 ```
 
 ## Relations

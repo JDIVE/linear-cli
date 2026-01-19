@@ -35,6 +35,7 @@ fn test_projects_help() {
     assert_eq!(code, 0);
     assert!(stdout.contains("list"));
     assert!(stdout.contains("create"));
+    assert!(stdout.contains("status"));
 }
 
 #[test]
@@ -54,6 +55,18 @@ fn test_issues_help() {
     assert!(stdout.contains("create"));
     assert!(stdout.contains("start"));
     assert!(stdout.contains("stop"));
+    assert!(stdout.contains("remind"));
+    assert!(stdout.contains("subscribe"));
+    assert!(stdout.contains("unsubscribe"));
+}
+
+#[test]
+fn test_project_status_help() {
+    let (code, stdout, _stderr) = run_cli(&["projects", "status", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("update"));
 }
 
 #[test]

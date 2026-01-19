@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde_json::{json, Map, Value};
@@ -213,6 +213,42 @@ pub enum IssueCommands {
         /// Unassign the issue
         #[arg(short, long)]
         unassign: bool,
+    },
+    /// Set a reminder for an issue
+    #[command(after_help = r#"EXAMPLES:
+    linear issues remind LIN-123 --at 2025-01-30T09:00:00Z
+    linear i remind LIN-123 --in 2d"#)]
+    Remind {
+        /// Issue ID or identifier
+        id: String,
+        /// Reminder time (ISO 8601)
+        #[arg(long, conflicts_with = "in")]
+        at: Option<String>,
+        /// Reminder delay (e.g., 2d, 3h, 30m, 1h30m)
+        #[arg(long = "in", conflicts_with = "at")]
+        r#in: Option<String>,
+    },
+    /// Subscribe to an issue
+    #[command(after_help = r#"EXAMPLES:
+    linear issues subscribe LIN-123
+    linear i subscribe LIN-123 --user me"#)]
+    Subscribe {
+        /// Issue ID or identifier
+        id: String,
+        /// User to subscribe (user ID, name, email, or "me")
+        #[arg(long)]
+        user: Option<String>,
+    },
+    /// Unsubscribe from an issue
+    #[command(after_help = r#"EXAMPLES:
+    linear issues unsubscribe LIN-123
+    linear i unsubscribe LIN-123 --user me"#)]
+    Unsubscribe {
+        /// Issue ID or identifier
+        id: String,
+        /// User to unsubscribe (user ID, name, email, or "me")
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Archive an issue
     #[command(after_help = r#"EXAMPLE:
@@ -454,6 +490,9 @@ pub async fn handle(
             branch,
         } => start_issue(&id, checkout, branch, agent_opts).await,
         IssueCommands::Stop { id, unassign } => stop_issue(&id, unassign, agent_opts).await,
+        IssueCommands::Remind { id, at, r#in } => remind_issue(&id, at, r#in, output).await,
+        IssueCommands::Subscribe { id, user } => subscribe_issue(&id, user, output).await,
+        IssueCommands::Unsubscribe { id, user } => unsubscribe_issue(&id, user, output).await,
         IssueCommands::Archive { id } => archive_issue(&id, output, agent_opts).await,
         IssueCommands::Unarchive { id } => unarchive_issue(&id, output, agent_opts).await,
     }
@@ -490,6 +529,46 @@ fn due_filter_to_comparator(due: DueFilter) -> Value {
         DueFilter::NextWeek => json!({ "gte": fmt(next_week_start), "lte": fmt(next_week_end) }),
         DueFilter::NoDue => json!({ "null": true }),
     }
+}
+
+fn parse_reminder_delay(input: &str) -> Result<Duration> {
+    let value = input.trim().to_lowercase();
+    if value.is_empty() {
+        anyhow::bail!("Invalid delay: empty");
+    }
+
+    let mut total_minutes = 0i64;
+    let mut current_num = String::new();
+    for c in value.chars() {
+        if c.is_ascii_digit() {
+            current_num.push(c);
+        } else if c == 'd' || c == 'h' || c == 'm' {
+            let num: i64 = current_num.parse().unwrap_or(0);
+            if num == 0 {
+                anyhow::bail!("Invalid delay '{}'", input);
+            }
+            match c {
+                'd' => total_minutes += num * 24 * 60,
+                'h' => total_minutes += num * 60,
+                'm' => total_minutes += num,
+                _ => {}
+            }
+            current_num.clear();
+        } else {
+            anyhow::bail!("Invalid delay '{}'", input);
+        }
+    }
+
+    if !current_num.is_empty() {
+        let num: i64 = current_num.parse().unwrap_or(0);
+        total_minutes += num;
+    }
+
+    if total_minutes <= 0 {
+        anyhow::bail!("Invalid delay '{}'", input);
+    }
+
+    Ok(Duration::minutes(total_minutes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1314,6 +1393,161 @@ async fn unarchive_issue(
         );
     } else {
         anyhow::bail!("Failed to unarchive issue");
+    }
+
+    Ok(())
+}
+
+async fn remind_issue(
+    id: &str,
+    at: Option<String>,
+    delay: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+
+    let reminder_at = match (at, delay) {
+        (Some(at), None) => at,
+        (None, Some(delay)) => {
+            let delta = parse_reminder_delay(&delay)?;
+            let when = Local::now() + delta;
+            when.with_timezone(&Utc).to_rfc3339()
+        }
+        _ => {
+            anyhow::bail!("Provide either --at or --in for reminders.");
+        }
+    };
+
+    let mutation = r#"
+        mutation($id: String!, $reminderAt: DateTime!) {
+            issueReminder(id: $id, reminderAt: $reminderAt) {
+                success
+                issue {
+                    id
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({ "id": issue_id, "reminderAt": reminder_at })),
+        )
+        .await?;
+
+    if result["data"]["issueReminder"]["success"].as_bool() == Some(true) {
+        let issue = &result["data"]["issueReminder"]["issue"];
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Reminder set for {}",
+            "+".green(),
+            issue["identifier"].as_str().unwrap_or(id)
+        );
+    } else {
+        anyhow::bail!("Failed to set reminder");
+    }
+
+    Ok(())
+}
+
+async fn subscribe_issue(
+    id: &str,
+    user: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+    let user_value = user.unwrap_or_else(|| "me".to_string());
+    let user_id = resolve_user_id(&client, &user_value).await?;
+
+    let mutation = r#"
+        mutation($id: String!, $userId: String!) {
+            issueSubscribe(id: $id, userId: $userId) {
+                success
+                issue {
+                    id
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({ "id": issue_id, "userId": user_id })),
+        )
+        .await?;
+
+    if result["data"]["issueSubscribe"]["success"].as_bool() == Some(true) {
+        let issue = &result["data"]["issueSubscribe"]["issue"];
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Subscribed to {}",
+            "+".green(),
+            issue["identifier"].as_str().unwrap_or(id)
+        );
+    } else {
+        anyhow::bail!("Failed to subscribe to issue");
+    }
+
+    Ok(())
+}
+
+async fn unsubscribe_issue(
+    id: &str,
+    user: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+    let user_value = user.unwrap_or_else(|| "me".to_string());
+    let user_id = resolve_user_id(&client, &user_value).await?;
+
+    let mutation = r#"
+        mutation($id: String!, $userId: String!) {
+            issueUnsubscribe(id: $id, userId: $userId) {
+                success
+                issue {
+                    id
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({ "id": issue_id, "userId": user_id })),
+        )
+        .await?;
+
+    if result["data"]["issueUnsubscribe"]["success"].as_bool() == Some(true) {
+        let issue = &result["data"]["issueUnsubscribe"]["issue"];
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Unsubscribed from {}",
+            "+".green(),
+            issue["identifier"].as_str().unwrap_or(id)
+        );
+    } else {
+        anyhow::bail!("Failed to unsubscribe from issue");
     }
 
     Ok(())
