@@ -339,7 +339,7 @@ enum Commands {
         action: cycles::CycleCommands,
     },
     /// Manage comments - add and view issue comments
-    #[command(alias = "cm")]
+    #[command(aliases = ["cm", "com"])]
     #[command(after_help = r#"EXAMPLES:
     linear comments list ISSUE_ID           # List comments on issue
     linear cm create ISSUE_ID -b "LGTM!"    # Add a comment"#)]
@@ -348,7 +348,7 @@ enum Commands {
         action: comments::CommentCommands,
     },
     /// Manage documents - create and organize documentation
-    #[command(alias = "d")]
+    #[command(aliases = ["d", "doc"])]
     #[command(after_help = r#"EXAMPLES:
     linear documents list                   # List all documents
     linear d get DOC_ID                     # View document

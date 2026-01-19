@@ -146,6 +146,18 @@ fn test_aliases_work() {
     assert_eq!(code3, 0);
     assert_eq!(code4, 0);
     assert_eq!(stdout3, stdout4);
+
+    let (code5, stdout5, _) = run_cli(&["cm", "--help"]);
+    let (code6, stdout6, _) = run_cli(&["com", "--help"]);
+    assert_eq!(code5, 0);
+    assert_eq!(code6, 0);
+    assert_eq!(stdout5, stdout6);
+
+    let (code7, stdout7, _) = run_cli(&["d", "--help"]);
+    let (code8, stdout8, _) = run_cli(&["doc", "--help"]);
+    assert_eq!(code7, 0);
+    assert_eq!(code8, 0);
+    assert_eq!(stdout7, stdout8);
 }
 
 #[test]

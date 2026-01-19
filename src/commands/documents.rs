@@ -5,7 +5,7 @@ use serde_json::json;
 use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
-use crate::api::LinearClient;
+use crate::api::{resolve_project_id, LinearClient};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::paginate_nodes;
@@ -61,12 +61,23 @@ pub enum DocumentCommands {
         /// New color (hex)
         #[arg(long = "color-hex", id = "document_color")]
         color: Option<String>,
-        /// New project ID
+        /// New project name or ID
         #[arg(short, long)]
         project: Option<String>,
         /// Preview without updating (dry run)
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Delete a document
+    #[command(after_help = r#"EXAMPLES:
+    linear documents delete DOC_ID            # Delete with confirmation
+    linear d delete DOC_ID --force            # Delete without confirmation"#)]
+    Delete {
+        /// Document ID
+        id: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -124,6 +135,7 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
             let dry_run = dry_run || output.dry_run;
             update_document(&id, title, content, icon, color, project, dry_run, output).await
         }
+        DocumentCommands::Delete { id, force } => delete_document(&id, force).await,
     }
 }
 
@@ -353,10 +365,11 @@ async fn create_document(
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
+    let project_id = resolve_project_id(&client, project, true).await?;
 
     let mut input = json!({
         "title": title,
-        "projectId": project
+        "projectId": project_id
     });
 
     if let Some(c) = content {
@@ -428,8 +441,9 @@ async fn update_document(
     if let Some(col) = color {
         input["color"] = json!(col);
     }
-    if let Some(p) = project {
-        input["projectId"] = json!(p);
+    if let Some(project) = project {
+        let project_id = resolve_project_id(&client, &project, true).await?;
+        input["projectId"] = json!(project_id);
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -477,6 +491,35 @@ async fn update_document(
         println!("{} Document updated", "+".green());
     } else {
         anyhow::bail!("Failed to update document");
+    }
+
+    Ok(())
+}
+
+async fn delete_document(id: &str, force: bool) -> Result<()> {
+    if !force {
+        println!("Are you sure you want to delete document {}?", id);
+        println!("This action cannot be undone. Use --force to skip this prompt.");
+        return Ok(());
+    }
+
+    let client = LinearClient::new()?;
+
+    let mutation = r#"
+        mutation($id: String!) {
+            documentDelete(id: $id) {
+                success
+                entity { id title }
+            }
+        }
+    "#;
+
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["documentDelete"]["success"].as_bool() == Some(true) {
+        println!("{} Document deleted", "+".green());
+    } else {
+        anyhow::bail!("Failed to delete document");
     }
 
     Ok(())

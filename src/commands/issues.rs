@@ -753,6 +753,7 @@ async fn get_issues(ids: &[String], output: &OutputOptions) -> Result<()> {
                             priority
                             dueDate
                             url
+                            attachments { nodes { id title url createdAt } }
                             state { name }
                             team { name }
                             assignee { name }
@@ -825,6 +826,7 @@ async fn get_issue(id: &str, output: &OutputOptions) -> Result<()> {
                 url
                 createdAt
                 updatedAt
+                attachments { nodes { id title url createdAt } }
                 state { name }
                 team { name }
                 assignee { name email }
@@ -1443,15 +1445,20 @@ async fn remind_issue(
         .await?;
 
     if result["data"]["issueReminder"]["success"].as_bool() == Some(true) {
-        let issue = &result["data"]["issueReminder"]["issue"];
         if output.is_json() || output.has_template() {
-            print_json(issue, output)?;
+            let response = json!({
+                "success": true,
+                "issueId": issue_id,
+                "issue": id,
+                "reminderAt": reminder_at,
+            });
+            print_json(&response, output)?;
             return Ok(());
         }
         println!(
             "{} Reminder set for {}",
             "+".green(),
-            issue["identifier"].as_str().unwrap_or(id)
+            id
         );
     } else {
         anyhow::bail!("Failed to set reminder");

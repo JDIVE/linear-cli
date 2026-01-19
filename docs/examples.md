@@ -165,6 +165,7 @@ linear-cli d get DOC_ID
 linear-cli d create "Doc Title" -p PROJECT_ID
 linear-cli d update DOC_ID --title "New title" --dry-run
 linear-cli d list --output json
+linear-cli d delete DOC_ID --force
 
 # Templates
 linear-cli tpl list
@@ -206,11 +207,13 @@ linear-cli ws remove personal                  # Remove a workspace
 ## Bulk Operations
 
 ```bash
-linear-cli b update -s Done LIN-1 LIN-2 LIN-3  # Update multiple issues
-linear-cli b assign --user me LIN-1 LIN-2      # Assign multiple issues
-linear-cli b label --add bug LIN-1 LIN-2       # Add label to multiple issues
-linear-cli b move --project "Q1" LIN-1 LIN-2   # Move issues to project
-linear-cli b delete --force LIN-1 LIN-2 LIN-3  # Delete multiple issues
+linear-cli b update-state Done -i LIN-1,LIN-2,LIN-3  # Update multiple issues
+linear-cli b assign --user me -i LIN-1,LIN-2         # Assign multiple issues
+linear-cli b label "Bug" -i LIN-1,LIN-2              # Add label to multiple issues
+linear-cli b project "Q1" -i LIN-1,LIN-2             # Move issues to project
+linear-cli b cycle 12 -i LIN-1,LIN-2                 # Move issues to cycle
+linear-cli b priority 2 -i LIN-1,LIN-2               # Update issue priority
+linear-cli b archive -i LIN-1,LIN-2,LIN-3            # Archive multiple issues
 ```
 
 ## JSON Output
