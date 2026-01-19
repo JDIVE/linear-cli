@@ -453,6 +453,17 @@ fn normalize_project_status_type(value: &str) -> Result<&'static str> {
     }
 }
 
+fn validate_project_status_name(name: &str) -> Result<()> {
+    let length = name.chars().count();
+    if length > 25 {
+        anyhow::bail!(
+            "Project status name must be 25 characters or fewer (got {}).",
+            length
+        );
+    }
+    Ok(())
+}
+
 async fn list_project_updates(project: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let project_id = resolve_project_id(&client, project, true).await?;
@@ -781,6 +792,7 @@ async fn create_project_status(
 ) -> Result<()> {
     let client = LinearClient::new()?;
     let status_type = normalize_project_status_type(status_type)?;
+    validate_project_status_name(name)?;
 
     if output.dry_run {
         if output.is_json() || output.has_template() {
@@ -864,6 +876,7 @@ async fn update_project_status(
 
     let mut input = json!({});
     if let Some(name) = name {
+        validate_project_status_name(&name)?;
         input["name"] = json!(name);
     }
     if let Some(status_type) = status_type {

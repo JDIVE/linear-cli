@@ -24,7 +24,7 @@ linear-cli p archive PROJECT_ID
 linear-cli p unarchive PROJECT_ID
 linear-cli p add-labels PROJECT_ID LABEL_ID
 linear-cli p status list
-linear-cli p status create "Blocked" --type started --position 4
+linear-cli p status create "Blocked" --type started --position 4  # Name max 25 chars
 linear-cli p status update STATUS_ID --name "Paused"
 linear-cli p updates list PROJECT_ID
 linear-cli p updates create PROJECT_ID -b "Status update" --health onTrack
