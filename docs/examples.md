@@ -106,11 +106,17 @@ linear-cli s projects "backend" --limit 10
 
 ## Uploads
 
-Download attachments and images from Linear issues/comments:
+Download attachments and images from Linear issues/comments, or attach new ones:
 
 ```bash
 # Download to file
 linear-cli up fetch "https://uploads.linear.app/..." -f image.png
+
+# Attach a URL to an issue
+linear-cli up attach-url LIN-123 https://example.com --title "Spec"
+
+# Upload a file and attach to an issue
+linear-cli up upload LIN-123 ./design.png --title "Design" --content-type image/png
 
 # Output to stdout (for piping to other tools)
 linear-cli up fetch "https://uploads.linear.app/..." | base64
@@ -132,9 +138,15 @@ linear-cli t update ENG -d "Core team"
 linear-cli u list
 linear-cli u get me
 
+# Initiatives
+linear-cli ini list
+linear-cli ini create "Q1 Growth"
+linear-cli ini link INITIATIVE_ID PROJECT_ID
+
 # Cycles
 linear-cli c list -t Engineering
 linear-cli c current -t Engineering
+linear-cli c create -t Engineering --starts-at 2025-01-06 --ends-at 2025-01-20
 
 # Comments
 linear-cli cm list ISSUE_ID

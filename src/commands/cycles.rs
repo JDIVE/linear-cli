@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::NaiveDate;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
@@ -28,6 +29,27 @@ pub enum CycleCommands {
         #[arg(short, long)]
         team: String,
     },
+    /// Create a new cycle
+    #[command(after_help = r#"EXAMPLES:
+    linear cycles create -t ENG --starts-at 2025-01-06 --ends-at 2025-01-20
+    linear c create -t ENG --name "Sprint 12" --starts-at 2025-01-06 --ends-at 2025-01-20"#)]
+    Create {
+        /// Team ID or name
+        #[arg(short, long)]
+        team: String,
+        /// Cycle name (optional)
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Cycle description (optional)
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Start date (YYYY-MM-DD or full ISO datetime)
+        #[arg(long)]
+        starts_at: String,
+        /// End date (YYYY-MM-DD or full ISO datetime)
+        #[arg(long)]
+        ends_at: String,
+    },
 }
 
 #[derive(Tabled)]
@@ -52,7 +74,28 @@ pub async fn handle(cmd: CycleCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
         CycleCommands::List { team, all } => list_cycles(&team, all, output).await,
         CycleCommands::Current { team } => current_cycle(&team, output).await,
+        CycleCommands::Create {
+            team,
+            name,
+            description,
+            starts_at,
+            ends_at,
+        } => create_cycle(&team, name, description, &starts_at, &ends_at, output).await,
     }
+}
+
+fn normalize_datetime(value: &str, end_of_day: bool) -> Result<String> {
+    if value.len() == 10 {
+        if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+            let suffix = if end_of_day {
+                "T23:59:59.000Z"
+            } else {
+                "T00:00:00.000Z"
+            };
+            return Ok(format!("{}{}", date.format("%Y-%m-%d"), suffix));
+        }
+    }
+    Ok(value.to_string())
 }
 
 async fn list_cycles(team: &str, include_all: bool, output: &OutputOptions) -> Result<()> {
@@ -298,6 +341,59 @@ async fn current_cycle(team: &str, output: &OutputOptions) -> Result<()> {
                 println!("  {} {} [{}]", identifier.cyan(), title, state_colored);
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn create_cycle(
+    team: &str,
+    name: Option<String>,
+    description: Option<String>,
+    starts_at: &str,
+    ends_at: &str,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let team_id = resolve_team_id(&client, team).await?;
+
+    let input = json!({
+        "teamId": team_id,
+        "name": name,
+        "description": description,
+        "startsAt": normalize_datetime(starts_at, false)?,
+        "endsAt": normalize_datetime(ends_at, true)?,
+    });
+
+    let mutation = r#"
+        mutation($input: CycleCreateInput!) {
+            cycleCreate(input: $input) {
+                success
+                cycle {
+                    id
+                    name
+                    number
+                    startsAt
+                    endsAt
+                }
+            }
+        }
+    "#;
+
+    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    if result["data"]["cycleCreate"]["success"].as_bool() == Some(true) {
+        let cycle = &result["data"]["cycleCreate"]["cycle"];
+        if output.is_json() || output.has_template() {
+            print_json(cycle, output)?;
+            return Ok(());
+        }
+        println!(
+            "{} Created cycle: {}",
+            "+".green(),
+            cycle["name"].as_str().unwrap_or("Cycle")
+        );
+    } else {
+        anyhow::bail!("Failed to create cycle");
     }
 
     Ok(())

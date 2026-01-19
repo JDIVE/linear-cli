@@ -18,11 +18,15 @@ pub enum ProjectCommands {
     #[command(after_help = r#"EXAMPLES:
     linear projects list                       # List all projects
     linear p list --archived                   # Include archived projects
+    linear p list --project-statuses           # List available project statuses
     linear p list --output json                # Output as JSON"#)]
     List {
         /// Show archived projects
         #[arg(short, long)]
         archived: bool,
+        /// List available project statuses instead of projects
+        #[arg(long)]
+        project_statuses: bool,
     },
     /// Get project details
     #[command(after_help = r#"EXAMPLES:
@@ -190,9 +194,30 @@ struct ProjectUpdateRow {
     id: String,
 }
 
+#[derive(Tabled)]
+struct ProjectStatusRow {
+    #[tabled(rename = "Name")]
+    name: String,
+    #[tabled(rename = "Type")]
+    status_type: String,
+    #[tabled(rename = "Position")]
+    position: String,
+    #[tabled(rename = "ID")]
+    id: String,
+}
+
 pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
-        ProjectCommands::List { archived } => list_projects(archived, output).await,
+        ProjectCommands::List {
+            archived,
+            project_statuses,
+        } => {
+            if project_statuses {
+                list_project_statuses(archived, output).await
+            } else {
+                list_projects(archived, output).await
+            }
+        }
         ProjectCommands::Get { ids } => {
             let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
                 let stdin = io::stdin();
@@ -527,6 +552,85 @@ async fn list_projects(include_archived: bool, output: &OutputOptions) -> Result
     let table = Table::new(rows).to_string();
     println!("{}", table);
     println!("\n{} projects", projects.len());
+
+    Ok(())
+}
+
+async fn list_project_statuses(include_archived: bool, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let query = r#"
+        query($includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
+            projectStatuses(
+                first: $first,
+                after: $after,
+                last: $last,
+                before: $before,
+                includeArchived: $includeArchived
+            ) {
+                nodes {
+                    id
+                    name
+                    type
+                    position
+                }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                    hasPreviousPage
+                    startCursor
+                }
+            }
+        }
+    "#;
+
+    let mut vars = serde_json::Map::new();
+    vars.insert("includeArchived".to_string(), json!(include_archived));
+
+    let pagination = output.pagination.with_default_limit(50);
+    let mut statuses = paginate_nodes(
+        &client,
+        query,
+        vars,
+        &["data", "projectStatuses", "nodes"],
+        &["data", "projectStatuses", "pageInfo"],
+        &pagination,
+        50,
+    )
+    .await?;
+
+    if output.is_json() || output.has_template() {
+        print_json(&serde_json::json!(statuses), output)?;
+        return Ok(());
+    }
+
+    filter_values(&mut statuses, &output.filters);
+    if let Some(sort_key) = output.json.sort.as_deref() {
+        sort_values(&mut statuses, sort_key, output.json.order);
+    }
+
+    ensure_non_empty(&statuses, output)?;
+    if statuses.is_empty() {
+        println!("No project statuses found.");
+        return Ok(());
+    }
+
+    let rows: Vec<ProjectStatusRow> = statuses
+        .iter()
+        .map(|s| ProjectStatusRow {
+            name: s["name"].as_str().unwrap_or("-").to_string(),
+            status_type: s["type"].as_str().unwrap_or("-").to_string(),
+            position: s["position"]
+                .as_f64()
+                .map(|p| format!("{:.0}", p))
+                .unwrap_or("-".to_string()),
+            id: s["id"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
+
+    let table = Table::new(rows).to_string();
+    println!("{}", table);
+    println!("\n{} statuses", statuses.len());
 
     Ok(())
 }

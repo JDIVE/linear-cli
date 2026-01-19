@@ -234,6 +234,111 @@ pub async fn resolve_project_id(
     anyhow::bail!("Project not found: {}", project)
 }
 
+/// Resolve an initiative name or UUID to a UUID.
+pub async fn resolve_initiative_id(
+    client: &LinearClient,
+    initiative: &str,
+    include_archived: bool,
+) -> Result<String> {
+    if is_uuid(initiative) {
+        return Ok(initiative.to_string());
+    }
+
+    let query = r#"
+        query($name: String!, $includeArchived: Boolean) {
+            initiatives(
+                first: 1,
+                includeArchived: $includeArchived,
+                filter: { name: { eqIgnoreCase: $name } }
+            ) {
+                nodes { id name }
+            }
+        }
+    "#;
+
+    let mut include = include_archived;
+    for _ in 0..2 {
+        let result = client
+            .query(
+                query,
+                Some(json!({
+                    "name": initiative,
+                    "includeArchived": include
+                })),
+            )
+            .await?;
+
+        let empty = vec![];
+        let nodes = result["data"]["initiatives"]["nodes"]
+            .as_array()
+            .unwrap_or(&empty);
+
+        if let Some(node) = nodes.first() {
+            if let Some(id) = node["id"].as_str() {
+                return Ok(id.to_string());
+            }
+        }
+
+        if include {
+            break;
+        }
+        include = true;
+    }
+
+    anyhow::bail!("Initiative not found: {}", initiative)
+}
+
+/// Resolve a cycle name/number or UUID to a UUID for a given team.
+pub async fn resolve_cycle_id(client: &LinearClient, team_id: &str, cycle: &str) -> Result<String> {
+    if is_uuid(cycle) {
+        return Ok(cycle.to_string());
+    }
+
+    let query = r#"
+        query($teamId: String!) {
+            team(id: $teamId) {
+                id
+                cycles(first: 250) {
+                    nodes { id name number }
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .query(query, Some(json!({ "teamId": team_id })))
+        .await?;
+
+    let team = &result["data"]["team"];
+    if team.is_null() {
+        anyhow::bail!("Team not found for cycle lookup");
+    }
+
+    let empty = vec![];
+    let cycles = team["cycles"]["nodes"].as_array().unwrap_or(&empty);
+
+    let numeric = cycle.parse::<i64>().ok();
+    for c in cycles {
+        if let Some(id) = c["id"].as_str() {
+            if let Some(num) = numeric {
+                if c["number"].as_i64() == Some(num) {
+                    return Ok(id.to_string());
+                }
+            }
+
+            if c["name"]
+                .as_str()
+                .map(|n| n.eq_ignore_ascii_case(cycle))
+                == Some(true)
+            {
+                return Ok(id.to_string());
+            }
+        }
+    }
+
+    anyhow::bail!("Cycle not found: {}", cycle)
+}
+
 /// Resolve a workflow state name or UUID to a UUID for a team.
 pub async fn resolve_state_id(client: &LinearClient, team_id: &str, state: &str) -> Result<String> {
     if is_uuid(state) {

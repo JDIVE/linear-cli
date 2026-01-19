@@ -11,7 +11,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use commands::{
-    auth, bulk, comments, cycles, doctor, documents, git, interactive, issues, labels,
+    auth, bulk, comments, cycles, doctor, documents, git, initiatives, interactive, issues, labels,
     notifications, projects, relations, search, statuses, sync, teams, templates, time, uploads,
     users,
 };
@@ -266,6 +266,16 @@ enum Commands {
     Projects {
         #[command(subcommand)]
         action: projects::ProjectCommands,
+    },
+    /// Manage initiatives - list, create, update, archive initiatives
+    #[command(alias = "ini")]
+    #[command(after_help = r#"EXAMPLES:
+    linear initiatives list                  # List initiatives
+    linear ini get INITIATIVE_ID             # View initiative details
+    linear ini create "Q1 Growth"            # Create an initiative"#)]
+    Initiatives {
+        #[command(subcommand)]
+        action: initiatives::InitiativeCommands,
     },
     /// Manage issues - list, create, update, assign, track issues
     #[command(alias = "i")]
@@ -729,6 +739,7 @@ async fn run_command(
             println!("  Use --schema to print the current schema version.");
         }
         Commands::Projects { action } => projects::handle(action, output).await?,
+        Commands::Initiatives { action } => initiatives::handle(action, output).await?,
         Commands::Issues { action } => issues::handle(action, output, agent_opts).await?,
         Commands::Relations { action } => relations::handle(action, output).await?,
         Commands::Labels { action } => labels::handle(action, output).await?,

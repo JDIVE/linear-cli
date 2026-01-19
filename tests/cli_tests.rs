@@ -38,6 +38,15 @@ fn test_projects_help() {
 }
 
 #[test]
+fn test_initiatives_help() {
+    let (code, stdout, _stderr) = run_cli(&["initiatives", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("archive"));
+}
+
+#[test]
 fn test_issues_help() {
     let (code, stdout, _stderr) = run_cli(&["issues", "--help"]);
     assert_eq!(code, 0);
@@ -71,6 +80,10 @@ fn test_bulk_help() {
     assert!(stdout.contains("update-state"));
     assert!(stdout.contains("assign"));
     assert!(stdout.contains("label"));
+    assert!(stdout.contains("priority"));
+    assert!(stdout.contains("project"));
+    assert!(stdout.contains("cycle"));
+    assert!(stdout.contains("archive"));
 }
 
 #[test]
@@ -95,6 +108,15 @@ fn test_sync_help() {
     assert_eq!(code, 0);
     assert!(stdout.contains("status"));
     assert!(stdout.contains("push"));
+}
+
+#[test]
+fn test_uploads_help() {
+    let (code, stdout, _stderr) = run_cli(&["uploads", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("fetch"));
+    assert!(stdout.contains("attach-url"));
+    assert!(stdout.contains("upload"));
 }
 
 #[test]

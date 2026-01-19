@@ -7,7 +7,7 @@ A fast, powerful command-line interface for [Linear](https://linear.app) built w
 
 ## Features
 
-- **Full API Coverage** - Projects, issues, labels, teams, users, cycles, comments, documents
+- **Full API Coverage** - Projects, issues, initiatives, labels, teams, users, cycles, comments, documents
 - **Git Integration** - Checkout branches for issues, create PRs linked to issues
 - **jj (Jujutsu) Support** - First-class support for Jujutsu VCS alongside Git
 - **Interactive Mode** - TUI for browsing and managing issues
@@ -54,11 +54,12 @@ linear-cli g pr LIN-123
 |---------|-------|-------------|
 | `issues` | `i` | Manage issues |
 | `projects` | `p` | Manage projects |
+| `initiatives` | `ini` | Manage initiatives |
 | `relations` | `rel` | Manage issue relations |
 | `git` | `g` | Git branch operations and PR creation |
 | `search` | `s` | Search issues and projects |
 | `comments` | `cm` | Manage issue comments |
-| `uploads` | `up` | Fetch uploads/attachments |
+| `uploads` | `up` | Fetch and attach uploads |
 | `bulk` | `b` | Bulk operations on issues |
 | `labels` | `l` | Manage labels |
 | `teams` | `t` | List and view teams |
@@ -156,4 +157,3 @@ Contributions welcome! Please open an issue or submit a pull request.
 ## License
 
 [MIT](LICENSE)
-

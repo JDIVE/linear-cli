@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod documents;
 pub mod git;
 pub mod interactive;
+pub mod initiatives;
 pub mod issues;
 pub mod labels;
 pub mod notifications;

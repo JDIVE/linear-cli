@@ -1,5 +1,6 @@
 use anyhow::Result;
-use clap::Subcommand;
+use chrono::{Datelike, Duration, Local, NaiveDate};
+use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde_json::{json, Map, Value};
 use std::io::{self, BufRead};
@@ -17,6 +18,18 @@ use crate::text::truncate;
 use crate::AgentOptions;
 
 use super::templates;
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum DueFilter {
+    Overdue,
+    Today,
+    #[value(name = "this-week")]
+    ThisWeek,
+    #[value(name = "next-week")]
+    NextWeek,
+    #[value(name = "no-due")]
+    NoDue,
+}
 
 #[derive(Subcommand)]
 pub enum IssueCommands {
@@ -42,6 +55,18 @@ pub enum IssueCommands {
         /// Filter by project name
         #[arg(long)]
         project: Option<String>,
+        /// Filter by label name or ID
+        #[arg(long)]
+        label: Option<String>,
+        /// Filter by cycle name/number or ID
+        #[arg(long)]
+        cycle: Option<String>,
+        /// Filter by initiative name or ID
+        #[arg(long)]
+        initiative: Option<String>,
+        /// Filter by due date shortcut
+        #[arg(long, value_enum)]
+        due: Option<DueFilter>,
         /// Include archived issues
         #[arg(long)]
         archived: bool,
@@ -189,6 +214,20 @@ pub enum IssueCommands {
         #[arg(short, long)]
         unassign: bool,
     },
+    /// Archive an issue
+    #[command(after_help = r#"EXAMPLE:
+    linear issues archive LIN-123"#)]
+    Archive {
+        /// Issue ID or identifier
+        id: String,
+    },
+    /// Unarchive an issue
+    #[command(after_help = r#"EXAMPLE:
+    linear issues unarchive LIN-123"#)]
+    Unarchive {
+        /// Issue ID or identifier
+        id: String,
+    },
 }
 
 #[derive(Tabled)]
@@ -216,8 +255,27 @@ pub async fn handle(
             state,
             assignee,
             project,
+            label,
+            cycle,
+            initiative,
+            due,
             archived,
-        } => list_issues(team, state, assignee, project, archived, output, agent_opts).await,
+        } => {
+            list_issues(
+                team,
+                state,
+                assignee,
+                project,
+                label,
+                cycle,
+                initiative,
+                due,
+                archived,
+                output,
+                agent_opts,
+            )
+            .await
+        }
         IssueCommands::Get { ids } => {
             // Support reading from stdin if no IDs provided or if "-" is passed
             let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
@@ -396,6 +454,8 @@ pub async fn handle(
             branch,
         } => start_issue(&id, checkout, branch, agent_opts).await,
         IssueCommands::Stop { id, unassign } => stop_issue(&id, unassign, agent_opts).await,
+        IssueCommands::Archive { id } => archive_issue(&id, output, agent_opts).await,
+        IssueCommands::Unarchive { id } => unarchive_issue(&id, output, agent_opts).await,
     }
 }
 
@@ -410,12 +470,38 @@ fn priority_to_string(priority: Option<i64>) -> String {
     }
 }
 
+fn is_uuid(value: &str) -> bool {
+    value.len() == 36 && value.chars().filter(|c| *c == '-').count() == 4
+}
+
+fn due_filter_to_comparator(due: DueFilter) -> Value {
+    let today = Local::now().date_naive();
+    let week_start = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    let week_end = week_start + Duration::days(6);
+    let next_week_start = week_start + Duration::days(7);
+    let next_week_end = next_week_start + Duration::days(6);
+
+    let fmt = |date: NaiveDate| date.format("%Y-%m-%d").to_string();
+
+    match due {
+        DueFilter::Overdue => json!({ "lt": fmt(today) }),
+        DueFilter::Today => json!({ "eq": fmt(today) }),
+        DueFilter::ThisWeek => json!({ "gte": fmt(today), "lte": fmt(week_end) }),
+        DueFilter::NextWeek => json!({ "gte": fmt(next_week_start), "lte": fmt(next_week_end) }),
+        DueFilter::NoDue => json!({ "null": true }),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn list_issues(
     team: Option<String>,
     state: Option<String>,
     assignee: Option<String>,
     project: Option<String>,
+    label: Option<String>,
+    cycle: Option<String>,
+    initiative: Option<String>,
+    due: Option<DueFilter>,
     include_archived: bool,
     output: &OutputOptions,
     _agent_opts: AgentOptions,
@@ -423,19 +509,14 @@ async fn list_issues(
     let client = LinearClient::new()?;
 
     let query = r#"
-        query($team: String, $state: String, $assignee: String, $project: String, $includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
+        query($filter: IssueFilter, $includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
             issues(
                 first: $first,
                 after: $after,
                 last: $last,
                 before: $before,
                 includeArchived: $includeArchived,
-                filter: {
-                    team: { name: { eqIgnoreCase: $team } },
-                    state: { name: { eqIgnoreCase: $state } },
-                    assignee: { name: { eqIgnoreCase: $assignee } },
-                    project: { name: { eqIgnoreCase: $project } }
-                }
+                filter: $filter
             ) {
                 nodes {
                     id
@@ -458,17 +539,60 @@ async fn list_issues(
     let mut variables = Map::new();
     variables.insert("includeArchived".to_string(), json!(include_archived));
 
+    let mut filter = Map::new();
     if let Some(t) = team {
-        variables.insert("team".to_string(), json!(t));
+        filter.insert("team".to_string(), json!({ "name": { "eqIgnoreCase": t } }));
     }
     if let Some(s) = state {
-        variables.insert("state".to_string(), json!(s));
+        filter.insert("state".to_string(), json!({ "name": { "eqIgnoreCase": s } }));
     }
     if let Some(a) = assignee {
-        variables.insert("assignee".to_string(), json!(a));
+        filter.insert("assignee".to_string(), json!({ "name": { "eqIgnoreCase": a } }));
     }
+
+    let mut project_filter = Map::new();
     if let Some(p) = project {
-        variables.insert("project".to_string(), json!(p));
+        project_filter.insert("name".to_string(), json!({ "eqIgnoreCase": p }));
+    }
+    if let Some(init) = initiative {
+        let initiative_filter = if is_uuid(&init) {
+            json!({ "id": { "eq": init } })
+        } else {
+            json!({ "name": { "eqIgnoreCase": init } })
+        };
+        project_filter.insert(
+            "initiatives".to_string(),
+            json!({ "some": initiative_filter }),
+        );
+    }
+    if !project_filter.is_empty() {
+        filter.insert("project".to_string(), Value::Object(project_filter));
+    }
+
+    if let Some(label) = label {
+        let label_filter = if is_uuid(&label) {
+            json!({ "id": { "eq": label } })
+        } else {
+            json!({ "name": { "eqIgnoreCase": label } })
+        };
+        filter.insert("labels".to_string(), json!({ "some": label_filter }));
+    }
+
+    if let Some(cycle) = cycle {
+        let cycle_filter = if is_uuid(&cycle) {
+            json!({ "id": { "eq": cycle } })
+        } else {
+            json!({ "name": { "eqIgnoreCase": cycle } })
+        };
+        filter.insert("cycle".to_string(), cycle_filter);
+    }
+
+    if let Some(due) = due {
+        filter.insert("dueDate".to_string(), due_filter_to_comparator(due));
+    }
+
+    if !filter.is_empty() {
+        variables.insert("filter".to_string(), Value::Object(filter));
     }
 
     let pagination = output.pagination.with_default_limit(50);
@@ -1040,6 +1164,156 @@ async fn update_issue(
         );
     } else {
         anyhow::bail!("Failed to update issue");
+    }
+
+    Ok(())
+}
+
+async fn archive_issue(
+    id: &str,
+    output: &OutputOptions,
+    agent_opts: AgentOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+    let dry_run = output.dry_run || agent_opts.dry_run;
+
+    if dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": true,
+                    "id": issue_id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would archive issue:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!) {
+            issueArchive(id: $id) {
+                success
+                entity {
+                    id
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": issue_id })))
+        .await?;
+
+    if result["data"]["issueArchive"]["success"].as_bool() == Some(true) {
+        let issue = &result["data"]["issueArchive"]["entity"];
+        let identifier = issue["identifier"].as_str().unwrap_or(id);
+
+        if agent_opts.id_only {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
+            return Ok(());
+        }
+
+        if agent_opts.quiet {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
+        println!(
+            "{} Archived issue: {} {}",
+            "+".green(),
+            identifier,
+            issue["title"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to archive issue");
+    }
+
+    Ok(())
+}
+
+async fn unarchive_issue(
+    id: &str,
+    output: &OutputOptions,
+    agent_opts: AgentOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let issue_id = resolve_issue_id(&client, id, true).await?;
+    let dry_run = output.dry_run || agent_opts.dry_run;
+
+    if dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_archive": false,
+                    "id": issue_id,
+                }),
+                output,
+            )?;
+        } else {
+            println!("{}", "[DRY RUN] Would unarchive issue:".yellow().bold());
+            println!("  ID: {}", id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!) {
+            issueUnarchive(id: $id) {
+                success
+                entity {
+                    id
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": issue_id })))
+        .await?;
+
+    if result["data"]["issueUnarchive"]["success"].as_bool() == Some(true) {
+        let issue = &result["data"]["issueUnarchive"]["entity"];
+        let identifier = issue["identifier"].as_str().unwrap_or(id);
+
+        if agent_opts.id_only {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
+        if output.is_json() || output.has_template() {
+            print_json(issue, output)?;
+            return Ok(());
+        }
+
+        if agent_opts.quiet {
+            println!("{}", identifier);
+            return Ok(());
+        }
+
+        println!(
+            "{} Unarchived issue: {} {}",
+            "+".green(),
+            identifier,
+            issue["title"].as_str().unwrap_or("")
+        );
+    } else {
+        anyhow::bail!("Failed to unarchive issue");
     }
 
     Ok(())

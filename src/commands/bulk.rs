@@ -4,7 +4,7 @@ use colored::Colorize;
 use futures::future::join_all;
 use serde_json::json;
 
-use crate::api::LinearClient;
+use crate::api::{resolve_cycle_id, resolve_project_id, LinearClient};
 use crate::display_options;
 use crate::output::{print_json, OutputOptions};
 use crate::text::truncate;
@@ -49,6 +49,44 @@ pub enum BulkCommands {
     #[command(after_help = r#"EXAMPLES:
     linear bulk unassign -i LIN-1,LIN-2,LIN-3"#)]
     Unassign {
+        /// Comma-separated list of issue IDs (e.g., "LIN-1,LIN-2,LIN-3")
+        #[arg(short, long, value_delimiter = ',')]
+        issues: Vec<String>,
+    },
+    /// Update priority on multiple issues
+    #[command(after_help = r#"EXAMPLES:
+    linear bulk priority 2 -i LIN-1,LIN-2,LIN-3"#)]
+    Priority {
+        /// Priority (0=none, 1=urgent, 2=high, 3=normal, 4=low)
+        priority: i32,
+        /// Comma-separated list of issue IDs (e.g., "LIN-1,LIN-2,LIN-3")
+        #[arg(short, long, value_delimiter = ',')]
+        issues: Vec<String>,
+    },
+    /// Move multiple issues to a project
+    #[command(after_help = r#"EXAMPLES:
+    linear bulk project "Q1 Roadmap" -i LIN-1,LIN-2,LIN-3"#)]
+    Project {
+        /// Project name or ID
+        project: String,
+        /// Comma-separated list of issue IDs (e.g., "LIN-1,LIN-2,LIN-3")
+        #[arg(short, long, value_delimiter = ',')]
+        issues: Vec<String>,
+    },
+    /// Move multiple issues to a cycle
+    #[command(after_help = r#"EXAMPLES:
+    linear bulk cycle "Cycle 12" -i LIN-1,LIN-2,LIN-3"#)]
+    Cycle {
+        /// Cycle name/number or ID
+        cycle: String,
+        /// Comma-separated list of issue IDs (e.g., "LIN-1,LIN-2,LIN-3")
+        #[arg(short, long, value_delimiter = ',')]
+        issues: Vec<String>,
+    },
+    /// Archive multiple issues
+    #[command(after_help = r#"EXAMPLES:
+    linear bulk archive -i LIN-1,LIN-2,LIN-3"#)]
+    Archive {
         /// Comma-separated list of issue IDs (e.g., "LIN-1,LIN-2,LIN-3")
         #[arg(short, long, value_delimiter = ',')]
         issues: Vec<String>,
@@ -254,6 +292,14 @@ pub async fn handle(cmd: BulkCommands, output: &OutputOptions) -> Result<()> {
         BulkCommands::Assign { user, issues } => bulk_assign(&user, issues, output).await,
         BulkCommands::Label { label, issues } => bulk_label(&label, issues, output).await,
         BulkCommands::Unassign { issues } => bulk_unassign(issues, output).await,
+        BulkCommands::Priority { priority, issues } => {
+            bulk_update_priority(priority, issues, output).await
+        }
+        BulkCommands::Project { project, issues } => {
+            bulk_move_project(&project, issues, output).await
+        }
+        BulkCommands::Cycle { cycle, issues } => bulk_move_cycle(&cycle, issues, output).await,
+        BulkCommands::Archive { issues } => bulk_archive(issues, output).await,
     }
 }
 
@@ -444,6 +490,191 @@ async fn bulk_unassign(issues: Vec<String>, output: &OutputOptions) -> Result<()
     Ok(())
 }
 
+async fn bulk_update_priority(
+    priority: i32,
+    issues: Vec<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    if issues.is_empty() {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({ "error": "No issues specified", "results": [] }),
+                output,
+            )?;
+        } else {
+            println!("No issues specified.");
+        }
+        return Ok(());
+    }
+
+    if !output.is_json() && !output.has_template() {
+        println!(
+            "{} Updating priority to '{}' for {} issues...",
+            ">>".cyan(),
+            priority,
+            issues.len()
+        );
+    }
+
+    if !(0..=4).contains(&priority) {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({ "error": "Priority must be between 0 and 4", "results": [] }),
+                output,
+            )?;
+        } else {
+            println!("Priority must be between 0 and 4.");
+        }
+        return Ok(());
+    }
+
+    let client = LinearClient::new()?;
+    let futures: Vec<_> = issues
+        .iter()
+        .map(|issue_id| {
+            let client = &client;
+            let id = issue_id.clone();
+            async move { update_issue_priority(client, &id, priority).await }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+    print_summary(&results, "priority updated", output);
+
+    Ok(())
+}
+
+async fn bulk_move_project(
+    project: &str,
+    issues: Vec<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    if issues.is_empty() {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({ "error": "No issues specified", "results": [] }),
+                output,
+            )?;
+        } else {
+            println!("No issues specified.");
+        }
+        return Ok(());
+    }
+
+    if !output.is_json() && !output.has_template() {
+        println!(
+            "{} Moving {} issues to project '{}'...",
+            ">>".cyan(),
+            issues.len(),
+            project
+        );
+    }
+
+    let client = LinearClient::new()?;
+    let project_id = match resolve_project_id(&client, project, true).await {
+        Ok(id) => id,
+        Err(e) => {
+            if output.is_json() || output.has_template() {
+                print_json(
+                    &json!({ "error": format!("Failed to resolve project '{}': {}", project, e), "results": [] }),
+                    output,
+                )?;
+            } else {
+                println!("{} Failed to resolve project '{}': {}", "x".red(), project, e);
+            }
+            return Ok(());
+        }
+    };
+
+    let futures: Vec<_> = issues
+        .iter()
+        .map(|issue_id| {
+            let client = &client;
+            let project_id = &project_id;
+            let id = issue_id.clone();
+            async move { update_issue_project(client, &id, project_id).await }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+    print_summary(&results, "moved to project", output);
+
+    Ok(())
+}
+
+async fn bulk_move_cycle(cycle: &str, issues: Vec<String>, output: &OutputOptions) -> Result<()> {
+    if issues.is_empty() {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({ "error": "No issues specified", "results": [] }),
+                output,
+            )?;
+        } else {
+            println!("No issues specified.");
+        }
+        return Ok(());
+    }
+
+    if !output.is_json() && !output.has_template() {
+        println!(
+            "{} Moving {} issues to cycle '{}'...",
+            ">>".cyan(),
+            issues.len(),
+            cycle
+        );
+    }
+
+    let client = LinearClient::new()?;
+
+    let futures: Vec<_> = issues
+        .iter()
+        .map(|issue_id| {
+            let client = &client;
+            let id = issue_id.clone();
+            let cycle = cycle.to_string();
+            async move { update_issue_cycle(client, &id, &cycle).await }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+    print_summary(&results, "moved to cycle", output);
+
+    Ok(())
+}
+
+async fn bulk_archive(issues: Vec<String>, output: &OutputOptions) -> Result<()> {
+    if issues.is_empty() {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({ "error": "No issues specified", "results": [] }),
+                output,
+            )?;
+        } else {
+            println!("No issues specified.");
+        }
+        return Ok(());
+    }
+
+    if !output.is_json() && !output.has_template() {
+        println!("{} Archiving {} issues...", ">>".cyan(), issues.len());
+    }
+
+    let client = LinearClient::new()?;
+    let futures: Vec<_> = issues
+        .iter()
+        .map(|issue_id| {
+            let client = &client;
+            let id = issue_id.clone();
+            async move { archive_issue(client, &id).await }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+    print_summary(&results, "archived", output);
+
+    Ok(())
+}
+
 async fn update_issue_state(client: &LinearClient, issue_id: &str, state: &str) -> BulkResult {
     // First, get issue UUID and team ID
     let (uuid, team_id, identifier) = match get_issue_info(client, issue_id).await {
@@ -513,6 +744,266 @@ async fn update_issue_state(client: &LinearClient, issue_id: &str, state: &str) 
             issue_id: issue_id.to_string(),
             success: false,
             identifier: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+async fn update_issue_priority(
+    client: &LinearClient,
+    issue_id: &str,
+    priority: i32,
+) -> BulkResult {
+    let (uuid, _team_id, identifier) = match get_issue_info(client, issue_id).await {
+        Ok(info) => info,
+        Err(e) => {
+            return BulkResult {
+                issue_id: issue_id.to_string(),
+                success: false,
+                identifier: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mutation = r#"
+        mutation($id: String!, $input: IssueUpdateInput!) {
+            issueUpdate(id: $id, input: $input) {
+                success
+                issue {
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let input = json!({ "priority": priority });
+
+    match client
+        .mutate(mutation, Some(json!({ "id": uuid, "input": input })))
+        .await
+    {
+        Ok(result) => {
+            if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
+                let identifier = result["data"]["issueUpdate"]["issue"]["identifier"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or(identifier);
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: true,
+                    identifier,
+                    error: None,
+                }
+            } else {
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: false,
+                    identifier,
+                    error: Some("Update failed".to_string()),
+                }
+            }
+        }
+        Err(e) => BulkResult {
+            issue_id: issue_id.to_string(),
+            success: false,
+            identifier,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+async fn update_issue_project(
+    client: &LinearClient,
+    issue_id: &str,
+    project_id: &str,
+) -> BulkResult {
+    let (uuid, _team_id, identifier) = match get_issue_info(client, issue_id).await {
+        Ok(info) => info,
+        Err(e) => {
+            return BulkResult {
+                issue_id: issue_id.to_string(),
+                success: false,
+                identifier: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mutation = r#"
+        mutation($id: String!, $input: IssueUpdateInput!) {
+            issueUpdate(id: $id, input: $input) {
+                success
+                issue {
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let input = json!({ "projectId": project_id });
+
+    match client
+        .mutate(mutation, Some(json!({ "id": uuid, "input": input })))
+        .await
+    {
+        Ok(result) => {
+            if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
+                let identifier = result["data"]["issueUpdate"]["issue"]["identifier"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or(identifier);
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: true,
+                    identifier,
+                    error: None,
+                }
+            } else {
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: false,
+                    identifier,
+                    error: Some("Update failed".to_string()),
+                }
+            }
+        }
+        Err(e) => BulkResult {
+            issue_id: issue_id.to_string(),
+            success: false,
+            identifier,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+async fn update_issue_cycle(
+    client: &LinearClient,
+    issue_id: &str,
+    cycle: &str,
+) -> BulkResult {
+    let (uuid, team_id, identifier) = match get_issue_info(client, issue_id).await {
+        Ok(info) => info,
+        Err(e) => {
+            return BulkResult {
+                issue_id: issue_id.to_string(),
+                success: false,
+                identifier: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let cycle_id = match resolve_cycle_id(client, &team_id, cycle).await {
+        Ok(id) => id,
+        Err(e) => {
+            return BulkResult {
+                issue_id: issue_id.to_string(),
+                success: false,
+                identifier,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mutation = r#"
+        mutation($id: String!, $input: IssueUpdateInput!) {
+            issueUpdate(id: $id, input: $input) {
+                success
+                issue {
+                    identifier
+                    title
+                }
+            }
+        }
+    "#;
+
+    let input = json!({ "cycleId": cycle_id });
+
+    match client
+        .mutate(mutation, Some(json!({ "id": uuid, "input": input })))
+        .await
+    {
+        Ok(result) => {
+            if result["data"]["issueUpdate"]["success"].as_bool() == Some(true) {
+                let identifier = result["data"]["issueUpdate"]["issue"]["identifier"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or(identifier);
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: true,
+                    identifier,
+                    error: None,
+                }
+            } else {
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: false,
+                    identifier,
+                    error: Some("Update failed".to_string()),
+                }
+            }
+        }
+        Err(e) => BulkResult {
+            issue_id: issue_id.to_string(),
+            success: false,
+            identifier,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+async fn archive_issue(client: &LinearClient, issue_id: &str) -> BulkResult {
+    let (uuid, _team_id, identifier) = match get_issue_info(client, issue_id).await {
+        Ok(info) => info,
+        Err(e) => {
+            return BulkResult {
+                issue_id: issue_id.to_string(),
+                success: false,
+                identifier: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mutation = r#"
+        mutation($id: String!) {
+            issueArchive(id: $id) {
+                success
+                entity { identifier }
+            }
+        }
+    "#;
+
+    match client.mutate(mutation, Some(json!({ "id": uuid }))).await {
+        Ok(result) => {
+            if result["data"]["issueArchive"]["success"].as_bool() == Some(true) {
+                let identifier = result["data"]["issueArchive"]["entity"]["identifier"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or(identifier);
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: true,
+                    identifier,
+                    error: None,
+                }
+            } else {
+                BulkResult {
+                    issue_id: issue_id.to_string(),
+                    success: false,
+                    identifier,
+                    error: Some("Archive failed".to_string()),
+                }
+            }
+        }
+        Err(e) => BulkResult {
+            issue_id: issue_id.to_string(),
+            success: false,
+            identifier,
             error: Some(e.to_string()),
         },
     }
