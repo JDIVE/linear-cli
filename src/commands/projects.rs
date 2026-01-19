@@ -821,7 +821,7 @@ async fn create_project_status(
         mutation($input: ProjectStatusCreateInput!) {
             projectStatusCreate(input: $input) {
                 success
-                projectStatus {
+                status {
                     id
                     name
                     type
@@ -832,7 +832,7 @@ async fn create_project_status(
 
     let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
     if result["data"]["projectStatusCreate"]["success"].as_bool() == Some(true) {
-        let status = &result["data"]["projectStatusCreate"]["projectStatus"];
+        let status = &result["data"]["projectStatusCreate"]["status"];
         if output.is_json() || output.has_template() {
             print_json(status, output)?;
             return Ok(());
@@ -910,7 +910,7 @@ async fn update_project_status(
         mutation($id: String!, $input: ProjectStatusUpdateInput!) {
             projectStatusUpdate(id: $id, input: $input) {
                 success
-                projectStatus {
+                status {
                     id
                     name
                     type
@@ -923,7 +923,7 @@ async fn update_project_status(
         .mutate(mutation, Some(json!({ "id": id, "input": input })))
         .await?;
     if result["data"]["projectStatusUpdate"]["success"].as_bool() == Some(true) {
-        let status = &result["data"]["projectStatusUpdate"]["projectStatus"];
+        let status = &result["data"]["projectStatusUpdate"]["status"];
         if output.is_json() || output.has_template() {
             print_json(status, output)?;
             return Ok(());
