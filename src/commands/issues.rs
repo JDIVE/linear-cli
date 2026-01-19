@@ -602,6 +602,7 @@ async fn list_issues(
                     identifier
                     title
                     priority
+                    dueDate
                     state { name }
                     assignee { name }
                 }
@@ -750,6 +751,7 @@ async fn get_issues(ids: &[String], output: &OutputOptions) -> Result<()> {
                             title
                             description
                             priority
+                            dueDate
                             url
                             state { name }
                             team { name }
@@ -819,6 +821,7 @@ async fn get_issue(id: &str, output: &OutputOptions) -> Result<()> {
                 title
                 description
                 priority
+                dueDate
                 url
                 createdAt
                 updatedAt
