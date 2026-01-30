@@ -59,6 +59,7 @@ pub enum IssueCommands {
     linear issues create "Fix bug" -t ENG      # Create with title and team
     linear i create "Feature" -t ENG -p 2      # Create with high priority
     linear i create "Task" -t ENG -a me        # Assign to yourself
+    linear i create "Task" -t ENG --due +3d    # Due in 3 days
     linear i create "Bug" -t ENG --dry-run     # Preview without creating"#)]
     Create {
         /// Issue title
@@ -84,6 +85,12 @@ pub enum IssueCommands {
         /// Labels to add (can be specified multiple times)
         #[arg(short, long)]
         labels: Vec<String>,
+        /// Due date (today, tomorrow, +3d, +1w, or YYYY-MM-DD)
+        #[arg(long)]
+        due: Option<String>,
+        /// Estimate in points (e.g., 1, 2, 3, 5, 8)
+        #[arg(short, long)]
+        estimate: Option<f64>,
         /// Template name to use for default values
         #[arg(long)]
         template: Option<String>,
@@ -96,7 +103,9 @@ pub enum IssueCommands {
     linear issues update LIN-123 -s Done       # Mark as done
     linear i update LIN-123 -T "New title"     # Change title
     linear i update LIN-123 -p 1               # Set to urgent priority
-    linear i update LIN-123 -a me              # Assign to yourself"#)]
+    linear i update LIN-123 --due tomorrow     # Due tomorrow
+    linear i update LIN-123 -a me              # Assign to yourself
+    linear i update LIN-123 -l bug -l urgent   # Add labels"#)]
     Update {
         /// Issue ID
         id: String,
@@ -118,6 +127,15 @@ pub enum IssueCommands {
         /// New assignee (user ID, name, email, or "me")
         #[arg(short, long)]
         assignee: Option<String>,
+        /// Labels to set (can be specified multiple times)
+        #[arg(short, long)]
+        labels: Vec<String>,
+        /// Due date (today, tomorrow, +3d, +1w, YYYY-MM-DD, or "none" to clear)
+        #[arg(long)]
+        due: Option<String>,
+        /// Estimate in points (e.g., 1, 2, 3, 5, 8, or 0 to clear)
+        #[arg(short, long)]
+        estimate: Option<f64>,
         /// Preview without updating (dry run)
         #[arg(long)]
         dry_run: bool,
@@ -219,6 +237,8 @@ pub async fn handle(
             state,
             assignee,
             labels,
+            due,
+            estimate,
             template,
             dry_run,
         } => {
@@ -295,6 +315,8 @@ pub async fn handle(
                 state,
                 assignee,
                 final_labels,
+                due,
+                estimate,
                 output,
                 agent_opts,
                 dry_run,
@@ -309,6 +331,9 @@ pub async fn handle(
             priority,
             state,
             assignee,
+            labels,
+            due,
+            estimate,
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run || agent_opts.dry_run;
@@ -335,6 +360,9 @@ pub async fn handle(
                 priority,
                 state,
                 assignee,
+                labels,
+                due,
+                estimate,
                 dry_run,
                 output,
                 agent_opts,
@@ -663,6 +691,8 @@ async fn create_issue(
     state: Option<String>,
     assignee: Option<String>,
     labels: Vec<String>,
+    due: Option<String>,
+    estimate: Option<f64>,
     output: &OutputOptions,
     agent_opts: AgentOptions,
     dry_run: bool,
@@ -714,6 +744,18 @@ async fn create_issue(
         all_labels.extend(labels.clone());
         input["labelIds"] = json!(all_labels);
     }
+    if let Some(ref d) = due {
+        // Parse due date shorthand
+        if let Some(parsed) = crate::dates::parse_due_date(d) {
+            input["dueDate"] = json!(parsed);
+        } else {
+            // Assume it's already a valid date format
+            input["dueDate"] = json!(d);
+        }
+    }
+    if let Some(e) = estimate {
+        input["estimate"] = json!(e);
+    }
 
     // Dry run: show what would be created without actually creating
     if dry_run {
@@ -730,6 +772,8 @@ async fn create_issue(
                         "state": state,
                         "assignee": assignee,
                         "labels": labels,
+                        "dueDate": due,
+                        "estimate": estimate,
                     }
                 }),
                 output,
@@ -757,6 +801,12 @@ async fn create_issue(
             }
             if !labels.is_empty() {
                 println!("  Labels:      {}", labels.join(", "));
+            }
+            if let Some(ref d) = due {
+                println!("  Due:         {}", d);
+            }
+            if let Some(e) = estimate {
+                println!("  Estimate:    {}", e);
             }
         }
         return Ok(());
@@ -827,6 +877,9 @@ async fn update_issue(
     priority: Option<i32>,
     state: Option<String>,
     assignee: Option<String>,
+    labels: Vec<String>,
+    due: Option<String>,
+    estimate: Option<f64>,
     dry_run: bool,
     output: &OutputOptions,
     agent_opts: AgentOptions,
@@ -853,6 +906,27 @@ async fn update_issue(
     }
     if let Some(a) = assignee {
         input["assigneeId"] = json!(a);
+    }
+    if !labels.is_empty() {
+        input["labelIds"] = json!(labels);
+    }
+    if let Some(ref d) = due {
+        // Support clearing due date with "none"
+        if d.eq_ignore_ascii_case("none") || d.eq_ignore_ascii_case("clear") {
+            input["dueDate"] = json!(null);
+        } else if let Some(parsed) = crate::dates::parse_due_date(d) {
+            input["dueDate"] = json!(parsed);
+        } else {
+            input["dueDate"] = json!(d);
+        }
+    }
+    if let Some(e) = estimate {
+        // 0 clears the estimate
+        if e == 0.0 {
+            input["estimate"] = json!(null);
+        } else {
+            input["estimate"] = json!(e);
+        }
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
