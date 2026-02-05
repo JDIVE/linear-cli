@@ -737,25 +737,42 @@ async fn create_issue(
         input["stateId"] = json!(s);
     }
     if let Some(ref a) = assignee {
-        // Resolve user name/email to UUID
-        let assignee_id = resolve_user_id(&client, a, &output.cache).await?;
-        input["assigneeId"] = json!(assignee_id);
+        // Resolve user name/email to UUID (skip during dry-run to avoid API calls)
+        if dry_run {
+            input["assigneeId"] = json!(a);
+        } else {
+            let assignee_id = resolve_user_id(&client, a, &output.cache).await?;
+            input["assigneeId"] = json!(assignee_id);
+        }
     }
     if !labels.is_empty() {
-        // Resolve label names to UUIDs
-        let mut label_ids: Vec<String> = input["labelIds"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        for label in &labels {
-            let label_id = resolve_label_id(&client, label, &output.cache).await?;
-            label_ids.push(label_id);
+        // Resolve label names to UUIDs (skip during dry-run to avoid API calls)
+        if dry_run {
+            let mut label_ids: Vec<String> = input["labelIds"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            label_ids.extend(labels.clone());
+            input["labelIds"] = json!(label_ids);
+        } else {
+            let mut label_ids: Vec<String> = input["labelIds"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for label in &labels {
+                let label_id = resolve_label_id(&client, label, &output.cache).await?;
+                label_ids.push(label_id);
+            }
+            input["labelIds"] = json!(label_ids);
         }
-        input["labelIds"] = json!(label_ids);
     }
     if let Some(ref d) = due {
         // Parse due date shorthand
@@ -918,18 +935,26 @@ async fn update_issue(
         input["stateId"] = json!(s);
     }
     if let Some(a) = assignee {
-        // Resolve user name/email to UUID
-        let assignee_id = resolve_user_id(&client, &a, &output.cache).await?;
-        input["assigneeId"] = json!(assignee_id);
+        // Resolve user name/email to UUID (skip during dry-run to avoid API calls)
+        if dry_run {
+            input["assigneeId"] = json!(a);
+        } else {
+            let assignee_id = resolve_user_id(&client, &a, &output.cache).await?;
+            input["assigneeId"] = json!(assignee_id);
+        }
     }
     if !labels.is_empty() {
-        // Resolve label names to UUIDs
-        let mut label_ids = Vec::new();
-        for label in &labels {
-            let label_id = resolve_label_id(&client, label, &output.cache).await?;
-            label_ids.push(label_id);
+        // Resolve label names to UUIDs (skip during dry-run to avoid API calls)
+        if dry_run {
+            input["labelIds"] = json!(labels);
+        } else {
+            let mut label_ids = Vec::new();
+            for label in &labels {
+                let label_id = resolve_label_id(&client, label, &output.cache).await?;
+                label_ids.push(label_id);
+            }
+            input["labelIds"] = json!(label_ids);
         }
-        input["labelIds"] = json!(label_ids);
     }
     if let Some(ref d) = due {
         // Support clearing due date with "none"
