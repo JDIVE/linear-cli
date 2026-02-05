@@ -1,5 +1,6 @@
 use std::time::Duration;
 use crate::error::CliError;
+use rand::Rng;
 use tokio::time::sleep;
 
 /// Retry configuration for API calls
@@ -37,7 +38,7 @@ impl RetryConfig {
         }
     }
 
-    /// Calculate delay for a given attempt (0-indexed)
+    /// Calculate delay for a given attempt (0-indexed) with jitter
     pub fn delay_for_attempt(&self, attempt: u32, retry_after: Option<u64>) -> Duration {
         // If server specified retry-after, use that
         if let Some(seconds) = retry_after {
@@ -48,7 +49,16 @@ impl RetryConfig {
         let delay_ms = (self.initial_delay_ms as f64 * self.exponential_base.powi(attempt as i32))
             .min(self.max_delay_ms as f64) as u64;
 
-        Duration::from_millis(delay_ms)
+        // Add ±25% jitter to avoid thundering herd
+        let jitter_range = delay_ms / 4;
+        let jitter = if jitter_range > 0 {
+            rand::thread_rng().gen_range(0..=jitter_range * 2) as i64 - jitter_range as i64
+        } else {
+            0
+        };
+        let final_delay = (delay_ms as i64 + jitter).max(0) as u64;
+
+        Duration::from_millis(final_delay)
     }
 }
 
