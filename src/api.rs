@@ -44,10 +44,8 @@ pub async fn resolve_team_id(client: &LinearClient, team: &str, cache_opts: &Cac
     let teams = result["data"]["teams"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_team_id(teams, team) {
-        if !cache_opts.no_cache {
-            let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-            let _ = cache.set(CacheType::Teams, json!(teams));
-        }
+        // Don't cache filtered results - they would poison the shared cache
+        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
@@ -126,10 +124,8 @@ pub async fn resolve_user_id(client: &LinearClient, user: &str, cache_opts: &Cac
     let users = result["data"]["users"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_user_id(users, user) {
-        if !cache_opts.no_cache {
-            let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-            let _ = cache.set(CacheType::Users, json!(users));
-        }
+        // Don't cache filtered results - they would poison the shared cache
+        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
@@ -191,10 +187,8 @@ pub async fn resolve_label_id(client: &LinearClient, label: &str, cache_opts: &C
     let labels = result["data"]["issueLabels"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_label_id(labels, label) {
-        if !cache_opts.no_cache {
-            let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-            let _ = cache.set(CacheType::Labels, json!(labels));
-        }
+        // Don't cache filtered results - they would poison the shared cache
+        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
