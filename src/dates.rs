@@ -154,10 +154,36 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tomorrow_short() {
+        let result = parse_due_date("tom");
+        let expected = (Local::now().date_naive() + Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_parse_yesterday() {
+        let result = parse_due_date("yesterday");
+        let expected = (Local::now().date_naive() - Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
     fn test_parse_relative_days() {
         let today = Local::now().date_naive();
         let result = parse_due_date("+3d");
         let expected = (today + Duration::days(3)).format("%Y-%m-%d").to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_parse_relative_days_negative() {
+        let today = Local::now().date_naive();
+        let result = parse_due_date("-2d");
+        let expected = (today - Duration::days(2)).format("%Y-%m-%d").to_string();
         assert_eq!(result, Some(expected));
     }
 
@@ -173,5 +199,45 @@ mod tests {
     fn test_parse_iso_date() {
         let result = parse_due_date("2024-03-15");
         assert_eq!(result, Some("2024-03-15".to_string()));
+    }
+
+    #[test]
+    fn test_parse_us_date_format() {
+        let result = parse_due_date("03/15/2024");
+        assert_eq!(result, Some("2024-03-15".to_string()));
+    }
+
+    #[test]
+    fn test_parse_next_week() {
+        let today = Local::now().date_naive();
+        let result = parse_due_date("next-week");
+        let expected = (today + Duration::weeks(1)).format("%Y-%m-%d").to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn test_parse_end_of_week() {
+        let result = parse_due_date("eow");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_end_of_month() {
+        let result = parse_due_date("eom");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_invalid() {
+        assert_eq!(parse_due_date("xyz"), None);
+        assert_eq!(parse_due_date(""), None);
+        assert_eq!(parse_due_date("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_case_insensitive() {
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(parse_due_date("TODAY"), Some(today.clone()));
+        assert_eq!(parse_due_date("Today"), Some(today));
     }
 }
