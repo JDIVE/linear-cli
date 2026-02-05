@@ -12,6 +12,7 @@ mod vcs;
 mod retry;
 mod text;
 mod input;
+mod types;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
