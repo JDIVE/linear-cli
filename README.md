@@ -197,9 +197,10 @@ Cache is scoped per profile at `~/.config/linear-cli/cache/{profile}/`.
 
 ## Documentation
 
+- [Agent Skills](docs/skills.md) - 27 skills for AI agents
+- [AI Agent Integration](docs/ai-agents.md) - Setup for Claude Code, Cursor, OpenAI Codex
 - [Usage Examples](docs/examples.md) - Detailed command examples
 - [Workflows](docs/workflows.md) - Common workflow patterns
-- [AI Agent Integration](docs/ai-agents.md) - Setup for Claude Code, Cursor, OpenAI Codex
 - [JSON Samples](docs/json/README.md) - Example JSON output shapes
 - [JSON Schema](docs/json/schema.json) - Schema version reference
 - [Shell Completions](docs/shell-completions.md) - Tab completion setup
@@ -209,7 +210,7 @@ Cache is scoped per profile at `~/.config/linear-cli/cache/{profile}/`.
 | Feature | @linear/cli | linear-go | linear-cli |
 |---------|---------------|-------------|--------------|
 | Last updated | 2021 | 2023 | 2026 |
-| Agent Skills | No | No | Yes |
+| Agent Skills | No | No | **27 skills** |
 | Git PR creation | No | No | Yes |
 | jj (Jujutsu) support | No | No | Yes |
 | Interactive TUI | No | No | Yes |
