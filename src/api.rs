@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::cache::{Cache, CacheOptions, CacheType};
 use crate::config;
 use crate::error::CliError;
+use crate::pagination::{paginate_nodes, PaginationOptions};
 use crate::retry::{with_retry, RetryConfig};
 use crate::text::is_uuid;
 use std::sync::OnceLock;
@@ -53,6 +54,7 @@ pub async fn resolve_team_id(client: &LinearClient, team: &str, cache_opts: &Cac
         return Ok(team.to_string());
     }
 
+    // Check cache first
     if !cache_opts.no_cache {
         let cache = Cache::new()?;
         if let Some(cached) = cache.get(CacheType::Teams).and_then(|data| data.as_array().cloned()) {
@@ -62,6 +64,7 @@ pub async fn resolve_team_id(client: &LinearClient, team: &str, cache_opts: &Cac
         }
     }
 
+    // Try filtered query first (fast path)
     let query = r#"
         query($team: String!) {
             teams(first: 50, filter: { or: [{ key: { eqIgnoreCase: $team } }, { name: { eqIgnoreCase: $team } }] }) {
@@ -79,32 +82,43 @@ pub async fn resolve_team_id(client: &LinearClient, team: &str, cache_opts: &Cac
     let teams = result["data"]["teams"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_team_id(teams, team) {
-        // Don't cache filtered results - they would poison the shared cache
-        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
+    // Fallback: paginate through all teams (handles orgs with >500 teams)
     let query_all = r#"
-        query {
-            teams(first: 500) {
+        query($first: Int, $after: String) {
+            teams(first: $first, after: $after) {
                 nodes {
                     id
                     key
                     name
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
             }
         }
     "#;
 
-    let result = client.query(query_all, None).await?;
-    let teams = result["data"]["teams"]["nodes"].as_array().unwrap_or(&empty);
+    let pagination = PaginationOptions { all: true, page_size: Some(250), ..Default::default() };
+    let all_teams = paginate_nodes(
+        client,
+        query_all,
+        serde_json::Map::new(),
+        &["data", "teams", "nodes"],
+        &["data", "teams", "pageInfo"],
+        &pagination,
+        250,
+    ).await?;
 
     if !cache_opts.no_cache {
         let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-        let _ = cache.set(CacheType::Teams, json!(teams));
+        let _ = cache.set(CacheType::Teams, json!(all_teams));
     }
 
-    if let Some(id) = find_team_id(teams, team) {
+    if let Some(id) = find_team_id(&all_teams, team) {
         return Ok(id);
     }
 
@@ -133,6 +147,7 @@ pub async fn resolve_user_id(client: &LinearClient, user: &str, cache_opts: &Cac
         return Ok(user.to_string());
     }
 
+    // Check cache first
     if !cache_opts.no_cache {
         let cache = Cache::new()?;
         if let Some(cached) = cache.get(CacheType::Users).and_then(|data| data.as_array().cloned()) {
@@ -142,6 +157,7 @@ pub async fn resolve_user_id(client: &LinearClient, user: &str, cache_opts: &Cac
         }
     }
 
+    // Try filtered query first (fast path)
     let query = r#"
         query($user: String!) {
             users(first: 50, filter: { or: [{ name: { eqIgnoreCase: $user } }, { email: { eqIgnoreCase: $user } }] }) {
@@ -159,32 +175,43 @@ pub async fn resolve_user_id(client: &LinearClient, user: &str, cache_opts: &Cac
     let users = result["data"]["users"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_user_id(users, user) {
-        // Don't cache filtered results - they would poison the shared cache
-        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
+    // Fallback: paginate through all users (handles orgs with >500 users)
     let query_all = r#"
-        query {
-            users(first: 500) {
+        query($first: Int, $after: String) {
+            users(first: $first, after: $after) {
                 nodes {
                     id
                     name
                     email
                 }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
             }
         }
     "#;
 
-    let result = client.query(query_all, None).await?;
-    let users = result["data"]["users"]["nodes"].as_array().unwrap_or(&empty);
+    let pagination = PaginationOptions { all: true, page_size: Some(250), ..Default::default() };
+    let all_users = paginate_nodes(
+        client,
+        query_all,
+        serde_json::Map::new(),
+        &["data", "users", "nodes"],
+        &["data", "users", "pageInfo"],
+        &pagination,
+        250,
+    ).await?;
 
     if !cache_opts.no_cache {
         let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-        let _ = cache.set(CacheType::Users, json!(users));
+        let _ = cache.set(CacheType::Users, json!(all_users));
     }
 
-    if let Some(id) = find_user_id(users, user) {
+    if let Some(id) = find_user_id(&all_users, user) {
         return Ok(id);
     }
 
@@ -197,6 +224,7 @@ pub async fn resolve_label_id(client: &LinearClient, label: &str, cache_opts: &C
         return Ok(label.to_string());
     }
 
+    // Check cache first
     if !cache_opts.no_cache {
         let cache = Cache::new()?;
         if let Some(cached) = cache.get(CacheType::Labels).and_then(|data| data.as_array().cloned()) {
@@ -206,6 +234,7 @@ pub async fn resolve_label_id(client: &LinearClient, label: &str, cache_opts: &C
         }
     }
 
+    // Try filtered query first (fast path)
     let query = r#"
         query($label: String!) {
             issueLabels(first: 50, filter: { name: { eqIgnoreCase: $label } }) {
@@ -222,31 +251,42 @@ pub async fn resolve_label_id(client: &LinearClient, label: &str, cache_opts: &C
     let labels = result["data"]["issueLabels"]["nodes"].as_array().unwrap_or(&empty);
 
     if let Some(id) = find_label_id(labels, label) {
-        // Don't cache filtered results - they would poison the shared cache
-        // and cause list commands to return incomplete results
         return Ok(id);
     }
 
+    // Fallback: paginate through all labels (handles orgs with >500 labels)
     let query_all = r#"
-        query {
-            issueLabels(first: 500) {
+        query($first: Int, $after: String) {
+            issueLabels(first: $first, after: $after) {
                 nodes {
                     id
                     name
+                }
+                pageInfo {
+                    hasNextPage
+                    endCursor
                 }
             }
         }
     "#;
 
-    let result = client.query(query_all, None).await?;
-    let labels = result["data"]["issueLabels"]["nodes"].as_array().unwrap_or(&empty);
+    let pagination = PaginationOptions { all: true, page_size: Some(250), ..Default::default() };
+    let all_labels = paginate_nodes(
+        client,
+        query_all,
+        serde_json::Map::new(),
+        &["data", "issueLabels", "nodes"],
+        &["data", "issueLabels", "pageInfo"],
+        &pagination,
+        250,
+    ).await?;
 
     if !cache_opts.no_cache {
         let cache = Cache::with_ttl(cache_opts.effective_ttl_seconds())?;
-        let _ = cache.set(CacheType::Labels, json!(labels));
+        let _ = cache.set(CacheType::Labels, json!(all_labels));
     }
 
-    if let Some(id) = find_label_id(labels, label) {
+    if let Some(id) = find_label_id(&all_labels, label) {
         return Ok(id);
     }
 
