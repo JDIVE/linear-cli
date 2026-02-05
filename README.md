@@ -14,6 +14,7 @@ A fast, powerful command-line interface for [Linear](https://linear.app) built w
 - **Interactive Mode** - TUI for browsing and managing issues
 - **Multiple Workspaces** - Switch between Linear workspaces seamlessly
 - **Profiles & Auth** - Named profiles with `auth login/logout/status`
+- **Secure Storage** - Optional OS keyring support (Keychain, Credential Manager, Secret Service)
 - **Bulk Operations** - Perform actions on multiple issues at once
 - **JSON/NDJSON Output** - Machine-readable output for scripting and agents
 - **Smart Sorting** - Numeric and date-aware sorting (10 > 9, not "10" < "9")
@@ -27,6 +28,9 @@ A fast, powerful command-line interface for [Linear](https://linear.app) built w
 ```bash
 # From crates.io
 cargo install linear-cli
+
+# With secure storage (OS keyring support)
+cargo install linear-cli --features secure-storage
 
 # From source
 git clone https://github.com/Finesssee/linear-cli.git
@@ -135,11 +139,20 @@ See [docs/examples.md](docs/examples.md) for comprehensive examples.
 ## Configuration
 
 ```bash
-# Set API key
+# Set API key (stored in config file)
 linear-cli config set-key YOUR_API_KEY
 
 # Or use auth login
 linear-cli auth login
+
+# Store in OS keyring (requires --features secure-storage)
+linear-cli auth login --secure
+
+# Migrate existing keys to keyring
+linear-cli auth migrate
+
+# Check auth status
+linear-cli auth status
 
 # Or use environment variable
 export LINEAR_API_KEY=lin_api_xxx
@@ -147,6 +160,8 @@ export LINEAR_API_KEY=lin_api_xxx
 # Override profile per invocation
 export LINEAR_CLI_PROFILE=work
 ```
+
+API key priority: `LINEAR_API_KEY` env var > OS keyring > config file.
 
 Config stored at `~/.config/linear-cli/config.toml` (Linux/macOS) or `%APPDATA%\linear-cli\config.toml` (Windows).
 
