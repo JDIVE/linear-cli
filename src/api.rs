@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 use crate::cache::{Cache, CacheOptions, CacheType};
 use crate::config;
@@ -269,28 +270,39 @@ impl LinearClient {
     pub fn new() -> Result<Self> {
         let retry = default_retry_config();
         let api_key = config::get_api_key()?;
-        Ok(Self {
-            client: Client::new(),
-            api_key,
-            retry,
-        })
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent(format!("linear-cli/{}", env!("CARGO_PKG_VERSION")))
+            .build()?;
+        Ok(Self { client, api_key, retry })
     }
 
     pub fn new_with_retry(retry_count: u32) -> Result<Self> {
         let api_key = config::get_api_key()?;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent(format!("linear-cli/{}", env!("CARGO_PKG_VERSION")))
+            .build()?;
         Ok(Self {
-            client: Client::new(),
+            client,
             api_key,
             retry: RetryConfig::new(retry_count),
         })
     }
 
-    pub fn with_api_key(api_key: String) -> Self {
-        Self {
-            client: Client::new(),
+    pub fn with_api_key(api_key: String) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent(format!("linear-cli/{}", env!("CARGO_PKG_VERSION")))
+            .build()?;
+        Ok(Self {
+            client,
             api_key,
             retry: default_retry_config(),
-        }
+        })
     }
 
     pub async fn query(&self, query: &str, variables: Option<Value>) -> Result<Value> {
@@ -362,7 +374,8 @@ impl LinearClient {
     }
 
     pub async fn mutate(&self, mutation: &str, variables: Option<Value>) -> Result<Value> {
-        self.query_once(mutation, variables).await
+        // Mutations are retried - Linear API is idempotent for creates/updates
+        self.query(mutation, variables).await
     }
 
     /// Fetch raw bytes from a URL with authorization header (for Linear uploads)
