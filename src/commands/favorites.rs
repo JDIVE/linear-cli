@@ -80,7 +80,13 @@ async fn add_favorite(id: &str, output: &OutputOptions) -> Result<()> {
         .query(issue_query, Some(json!({ "identifier": id })))
         .await;
 
-    let mutation = if issue_result.is_ok() {
+    // Check if issue exists (query succeeded AND data.issue is not null)
+    let is_issue = issue_result
+        .as_ref()
+        .map(|r| !r["data"]["issue"].is_null())
+        .unwrap_or(false);
+
+    let mutation = if is_issue {
         r#"
             mutation($issueId: String!) {
                 favoriteCreate(input: { issueId: $issueId }) {
@@ -104,7 +110,7 @@ async fn add_favorite(id: &str, output: &OutputOptions) -> Result<()> {
         "#
     };
 
-    let vars = if issue_result.is_ok() {
+    let vars = if is_issue {
         json!({ "issueId": id })
     } else {
         json!({ "projectId": id })
@@ -148,7 +154,9 @@ async fn remove_favorite(id: &str, output: &OutputOptions) -> Result<()> {
     });
 
     if let Some(fav) = favorite {
-        let fav_id = fav["id"].as_str().unwrap();
+        let Some(fav_id) = fav["id"].as_str() else {
+            anyhow::bail!("Invalid favorite: missing id");
+        };
         let mutation = r#"
             mutation($id: String!) {
                 favoriteDelete(id: $id) {

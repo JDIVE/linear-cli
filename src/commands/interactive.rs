@@ -1,7 +1,6 @@
 use anyhow::Result;
 use colored::Colorize;
-use console::Term;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{console::Term, Confirm, Input, Select};
 use serde_json::json;
 use tabled::{Table, Tabled};
 
