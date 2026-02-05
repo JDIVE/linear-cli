@@ -4,6 +4,8 @@ mod commands;
 mod config;
 mod dates;
 mod error;
+#[cfg(feature = "secure-storage")]
+mod keyring;
 mod output;
 mod pagination;
 mod priority;

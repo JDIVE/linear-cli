@@ -114,6 +114,21 @@ pub fn get_api_key() -> Result<String> {
         }
     }
 
+    // Try keyring if feature is enabled
+    #[cfg(feature = "secure-storage")]
+    {
+        let config = load_config()?;
+        let profile = std::env::var("LINEAR_CLI_PROFILE")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or(config.current.clone())
+            .unwrap_or_else(|| "default".to_string());
+
+        if let Ok(Some(key)) = crate::keyring::get_key(&profile) {
+            return Ok(key);
+        }
+    }
+
     // Fall back to config file
     let config = load_config()?;
     let profile = std::env::var("LINEAR_CLI_PROFILE")
