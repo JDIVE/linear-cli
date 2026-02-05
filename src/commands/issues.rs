@@ -9,7 +9,7 @@ use crate::api::{resolve_team_id, LinearClient};
 use crate::display_options;
 use crate::input::read_ids_from_stdin;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
-use crate::pagination::paginate_nodes;
+use crate::pagination::{paginate_nodes, stream_nodes};
 use crate::priority::priority_to_string;
 use crate::vcs::{generate_branch_name, run_git_command};
 use crate::text::truncate;
@@ -432,6 +432,34 @@ async fn list_issues(
     }
 
     let pagination = output.pagination.with_default_limit(50);
+
+    // For NDJSON, use streaming to avoid buffering all results
+    if output.is_ndjson() {
+        let mut count = 0;
+        stream_nodes(
+            &client,
+            query,
+            variables,
+            &["data", "issues", "nodes"],
+            &["data", "issues", "pageInfo"],
+            &pagination,
+            50,
+            |batch| {
+                count += batch.len();
+                async move {
+                    for issue in batch {
+                        println!("{}", serde_json::to_string(&issue)?);
+                    }
+                    Ok(())
+                }
+            },
+        )
+        .await?;
+
+        return Ok(());
+    }
+
+    // For other formats, use paginate_nodes (need all results for sorting/filtering/tables)
     let issues = paginate_nodes(
         &client,
         query,
