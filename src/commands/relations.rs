@@ -303,7 +303,6 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
         return Ok(());
     }
 
-    let mut relation_rows = relation_rows;
     filter_values(&mut relation_rows, &output.filters);
     if let Some(sort_key) = output.json.sort.as_deref() {
         sort_values(&mut relation_rows, sort_key, output.json.order);

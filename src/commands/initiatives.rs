@@ -478,6 +478,7 @@ async fn get_initiative(id: &str, output: &OutputOptions) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_initiative(
     name: &str,
     description: Option<String>,

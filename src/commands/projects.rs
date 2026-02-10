@@ -1218,6 +1218,7 @@ async fn get_projects(ids: &[String], output: &OutputOptions) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_project(
     name: &str,
     team: &str,
@@ -1295,6 +1296,7 @@ async fn create_project(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_project(
     id: &str,
     name: Option<String>,
