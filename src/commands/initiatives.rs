@@ -5,9 +5,7 @@ use serde_json::json;
 use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
-use crate::api::{
-    resolve_initiative_id, resolve_project_id, resolve_user_id, LinearClient,
-};
+use crate::api::{resolve_initiative_id, resolve_project_id, resolve_user_id, LinearClient};
 use crate::display_options;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::{paginate_nodes, PaginationOptions};
@@ -60,8 +58,8 @@ pub enum InitiativeCommands {
         #[arg(long)]
         target_date: Option<String>,
         /// Initiative color (hex)
-        #[arg(long = "color-hex", id = "initiative_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
         /// Initiative icon
         #[arg(long)]
         icon: Option<String>,
@@ -92,8 +90,8 @@ pub enum InitiativeCommands {
         #[arg(long)]
         target_date: Option<String>,
         /// New color (hex)
-        #[arg(long = "color-hex", id = "initiative_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
         /// New icon
         #[arg(long)]
         icon: Option<String>,
@@ -177,7 +175,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
             owner,
             status,
             target_date,
-            color,
+            color_hex,
             icon,
         } => {
             create_initiative(
@@ -187,7 +185,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
                 owner,
                 status,
                 target_date,
-                color,
+                color_hex,
                 icon,
                 output,
             )
@@ -201,7 +199,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
             owner,
             status,
             target_date,
-            color,
+            color_hex,
             icon,
             dry_run,
         } => {
@@ -213,7 +211,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
                 owner,
                 status,
                 target_date,
-                color,
+                color_hex,
                 icon,
                 dry_run,
                 output,
@@ -222,12 +220,14 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
         }
         InitiativeCommands::Archive { id } => archive_initiative(&id, output).await,
         InitiativeCommands::Unarchive { id } => unarchive_initiative(&id, output).await,
-        InitiativeCommands::Link { initiative, project } => {
-            link_project(&initiative, &project, output).await
-        }
-        InitiativeCommands::Unlink { initiative, project } => {
-            unlink_project(&initiative, &project, output).await
-        }
+        InitiativeCommands::Link {
+            initiative,
+            project,
+        } => link_project(&initiative, &project, output).await,
+        InitiativeCommands::Unlink {
+            initiative,
+            project,
+        } => unlink_project(&initiative, &project, output).await,
     }
 }
 
@@ -308,10 +308,7 @@ async fn list_initiatives(include_archived: bool, output: &OutputOptions) -> Res
         .map(|i| InitiativeRow {
             name: truncate(i["name"].as_str().unwrap_or(""), width),
             status: i["status"].as_str().unwrap_or("-").to_string(),
-            target_date: i["targetDate"]
-                .as_str()
-                .unwrap_or("-")
-                .to_string(),
+            target_date: i["targetDate"].as_str().unwrap_or("-").to_string(),
             owner: i["owner"]["name"].as_str().unwrap_or("-").to_string(),
             id: i["id"].as_str().unwrap_or("").to_string(),
         })
@@ -395,10 +392,7 @@ async fn get_initiatives(ids: &[String], output: &OutputOptions) -> Result<()> {
                         desc.chars().take(100).collect::<String>()
                     );
                 }
-                println!(
-                    "Status: {}",
-                    initiative["status"].as_str().unwrap_or("-")
-                );
+                println!("Status: {}", initiative["status"].as_str().unwrap_or("-"));
                 println!(
                     "Target Date: {}",
                     initiative["targetDate"].as_str().unwrap_or("-")
@@ -459,10 +453,7 @@ async fn get_initiative(id: &str, output: &OutputOptions) -> Result<()> {
             desc.chars().take(120).collect::<String>()
         );
     }
-    println!(
-        "Status: {}",
-        initiative["status"].as_str().unwrap_or("-")
-    );
+    println!("Status: {}", initiative["status"].as_str().unwrap_or("-"));
     println!(
         "Target Date: {}",
         initiative["targetDate"].as_str().unwrap_or("-")
@@ -487,6 +478,7 @@ async fn get_initiative(id: &str, output: &OutputOptions) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_initiative(
     name: &str,
     description: Option<String>,
@@ -537,7 +529,9 @@ async fn create_initiative(
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
 
     if result["data"]["initiativeCreate"]["success"].as_bool() == Some(true) {
         let initiative = &result["data"]["initiativeCreate"]["initiative"];
@@ -696,7 +690,9 @@ async fn archive_initiative(id: &str, output: &OutputOptions) -> Result<()> {
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "id": initiative_id }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "id": initiative_id })))
+        .await?;
     if result["data"]["initiativeArchive"]["success"].as_bool() == Some(true) {
         let entity = &result["data"]["initiativeArchive"]["entity"];
         if output.is_json() || output.has_template() {
@@ -730,7 +726,10 @@ async fn unarchive_initiative(id: &str, output: &OutputOptions) -> Result<()> {
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would unarchive initiative:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would unarchive initiative:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -792,7 +791,9 @@ async fn link_project(initiative: &str, project: &str, output: &OutputOptions) -
         "projectId": project_id
     });
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
     if result["data"]["initiativeToProjectCreate"]["success"].as_bool() == Some(true) {
         let link = &result["data"]["initiativeToProjectCreate"]["initiativeToProject"];
         if output.is_json() || output.has_template() {
@@ -821,10 +822,15 @@ async fn unlink_project(initiative: &str, project: &str, output: &OutputOptions)
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "id": link_id }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "id": link_id })))
+        .await?;
     if result["data"]["initiativeToProjectDelete"]["success"].as_bool() == Some(true) {
         if output.is_json() || output.has_template() {
-            print_json(&json!({ "unlinked": true, "initiativeId": initiative_id, "projectId": project_id }), output)?;
+            print_json(
+                &json!({ "unlinked": true, "initiativeId": initiative_id, "projectId": project_id }),
+                output,
+            )?;
             return Ok(());
         }
         println!("{} Project unlinked from initiative", "+".green());

@@ -39,8 +39,8 @@ pub enum LabelCommands {
         #[arg(long)]
         team: Option<String>,
         /// Label color (hex)
-        #[arg(short, long = "color-hex", default_value = "#6B7280", id = "label_color")]
-        color: String,
+        #[arg(short, long = "color-hex", default_value = "#6B7280")]
+        color_hex: String,
         /// Label description (issue labels only)
         #[arg(short, long)]
         description: Option<String>,
@@ -63,8 +63,8 @@ pub enum LabelCommands {
         #[arg(short, long)]
         name: Option<String>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "label_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New description (issue labels only)
         #[arg(short, long)]
         description: Option<String>,
@@ -105,17 +105,28 @@ pub async fn handle(cmd: LabelCommands, output: &OutputOptions) -> Result<()> {
             name,
             r#type,
             team,
-            color,
+            color_hex,
             description,
             parent,
-        } => create_label(&name, &r#type, team, &color, description, parent, output).await,
+        } => {
+            create_label(
+                &name,
+                &r#type,
+                team,
+                &color_hex,
+                description,
+                parent,
+                output,
+            )
+            .await
+        }
         LabelCommands::Update {
             id,
             r#type,
             name,
-            color,
+            color_hex,
             description,
-        } => update_label(&id, &r#type, name, color, description, output).await,
+        } => update_label(&id, &r#type, name, color_hex, description, output).await,
         LabelCommands::Delete { id, r#type, force } => delete_label(&id, &r#type, force).await,
     }
 }

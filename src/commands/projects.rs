@@ -57,8 +57,8 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// Project color (hex)
-        #[arg(short, long = "color-hex", id = "project_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// Project start date (YYYY-MM-DD)
         #[arg(long)]
         start_date: Option<String>,
@@ -86,8 +86,8 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "project_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New icon
         #[arg(short, long)]
         icon: Option<String>,
@@ -196,8 +196,8 @@ pub enum ProjectStatusCommands {
         #[arg(long)]
         position: f64,
         /// Status color (hex)
-        #[arg(short, long = "color-hex", default_value = "#6B7280", id = "project_status_color")]
-        color: String,
+        #[arg(short, long = "color-hex", default_value = "#6B7280")]
+        color_hex: String,
         /// Status description
         #[arg(short, long)]
         description: Option<String>,
@@ -222,8 +222,8 @@ pub enum ProjectStatusCommands {
         #[arg(long)]
         position: Option<f64>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "project_status_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New description
         #[arg(short, long)]
         description: Option<String>,
@@ -320,7 +320,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             team,
             description,
             content,
-            color,
+            color_hex,
             start_date,
             target_date,
             status,
@@ -330,7 +330,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
                 &team,
                 description,
                 content,
-                color,
+                color_hex,
                 start_date,
                 target_date,
                 status,
@@ -343,7 +343,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             name,
             description,
             content,
-            color,
+            color_hex,
             icon,
             start_date,
             target_date,
@@ -356,7 +356,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
                 name,
                 description,
                 content,
-                color,
+                color_hex,
                 icon,
                 start_date,
                 target_date,
@@ -393,19 +393,27 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
             name,
             r#type,
             position,
-            color,
+            color_hex,
             description,
             indefinite,
         } => {
-            create_project_status(&name, &r#type, position, &color, description, indefinite, output)
-                .await
+            create_project_status(
+                &name,
+                &r#type,
+                position,
+                &color_hex,
+                description,
+                indefinite,
+                output,
+            )
+            .await
         }
         ProjectStatusCommands::Update {
             id,
             name,
             r#type,
             position,
-            color,
+            color_hex,
             description,
             indefinite,
         } => {
@@ -414,7 +422,7 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
                 name,
                 r#type,
                 position,
-                color,
+                color_hex,
                 description,
                 indefinite,
                 output,
@@ -811,7 +819,10 @@ async fn create_project_status(
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would create project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would create project status:".yellow().bold()
+            );
             println!("  Name: {}", name);
         }
         return Ok(());
@@ -842,7 +853,9 @@ async fn create_project_status(
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
     if result["data"]["projectStatusCreate"]["success"].as_bool() == Some(true) {
         let status = &result["data"]["projectStatusCreate"]["status"];
         if output.is_json() || output.has_template() {
@@ -913,7 +926,10 @@ async fn update_project_status(
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would update project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would update project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -967,7 +983,10 @@ async fn archive_project_status(id: &str, output: &OutputOptions) -> Result<()> 
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would archive project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would archive project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -1018,7 +1037,10 @@ async fn unarchive_project_status(id: &str, output: &OutputOptions) -> Result<()
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would unarchive project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would unarchive project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -1036,9 +1058,7 @@ async fn unarchive_project_status(id: &str, output: &OutputOptions) -> Result<()
         }
     "#;
 
-    let result = client
-        .mutate(mutation, Some(json!({ "id": id })))
-        .await?;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
     if result["data"]["projectStatusUnarchive"]["success"].as_bool() == Some(true) {
         let entity = &result["data"]["projectStatusUnarchive"]["entity"];
         if output.is_json() || output.has_template() {
@@ -1198,6 +1218,7 @@ async fn get_projects(ids: &[String], output: &OutputOptions) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_project(
     name: &str,
     team: &str,
@@ -1275,6 +1296,7 @@ async fn create_project(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_project(
     id: &str,
     name: Option<String>,

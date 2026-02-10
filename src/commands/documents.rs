@@ -42,8 +42,8 @@ pub enum DocumentCommands {
         #[arg(short, long)]
         icon: Option<String>,
         /// Icon color (hex color code)
-        #[arg(long = "color-hex", id = "document_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
     },
     /// Update an existing document
     Update {
@@ -59,8 +59,8 @@ pub enum DocumentCommands {
         #[arg(short, long)]
         icon: Option<String>,
         /// New color (hex)
-        #[arg(long = "color-hex", id = "document_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
         /// New project name or ID
         #[arg(short, long)]
         project: Option<String>,
@@ -121,19 +121,22 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
             project,
             content,
             icon,
-            color,
-        } => create_document(&title, &project, content, icon, color, output).await,
+            color_hex,
+        } => create_document(&title, &project, content, icon, color_hex, output).await,
         DocumentCommands::Update {
             id,
             title,
             content,
             icon,
-            color,
+            color_hex,
             project,
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run;
-            update_document(&id, title, content, icon, color, project, dry_run, output).await
+            update_document(
+                &id, title, content, icon, color_hex, project, dry_run, output,
+            )
+            .await
         }
         DocumentCommands::Delete { id, force } => delete_document(&id, force).await,
     }

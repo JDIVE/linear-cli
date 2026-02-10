@@ -298,16 +298,7 @@ pub async fn handle(
             archived,
         } => {
             list_issues(
-                team,
-                state,
-                assignee,
-                project,
-                label,
-                cycle,
-                initiative,
-                due,
-                archived,
-                output,
+                team, state, assignee, project, label, cycle, initiative, due, archived, output,
                 agent_opts,
             )
             .await
@@ -624,10 +615,16 @@ async fn list_issues(
         filter.insert("team".to_string(), json!({ "name": { "eqIgnoreCase": t } }));
     }
     if let Some(s) = state {
-        filter.insert("state".to_string(), json!({ "name": { "eqIgnoreCase": s } }));
+        filter.insert(
+            "state".to_string(),
+            json!({ "name": { "eqIgnoreCase": s } }),
+        );
     }
     if let Some(a) = assignee {
-        filter.insert("assignee".to_string(), json!({ "name": { "eqIgnoreCase": a } }));
+        filter.insert(
+            "assignee".to_string(),
+            json!({ "name": { "eqIgnoreCase": a } }),
+        );
     }
 
     let mut project_filter = Map::new();
@@ -1253,11 +1250,7 @@ async fn update_issue(
     Ok(())
 }
 
-async fn archive_issue(
-    id: &str,
-    output: &OutputOptions,
-    agent_opts: AgentOptions,
-) -> Result<()> {
+async fn archive_issue(id: &str, output: &OutputOptions, agent_opts: AgentOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let dry_run = output.dry_run || agent_opts.dry_run;
@@ -1328,11 +1321,7 @@ async fn archive_issue(
     Ok(())
 }
 
-async fn unarchive_issue(
-    id: &str,
-    output: &OutputOptions,
-    agent_opts: AgentOptions,
-) -> Result<()> {
+async fn unarchive_issue(id: &str, output: &OutputOptions, agent_opts: AgentOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let dry_run = output.dry_run || agent_opts.dry_run;
@@ -1455,11 +1444,7 @@ async fn remind_issue(
             print_json(&response, output)?;
             return Ok(());
         }
-        println!(
-            "{} Reminder set for {}",
-            "+".green(),
-            id
-        );
+        println!("{} Reminder set for {}", "+".green(), id);
     } else {
         anyhow::bail!("Failed to set reminder");
     }
@@ -1467,11 +1452,7 @@ async fn remind_issue(
     Ok(())
 }
 
-async fn subscribe_issue(
-    id: &str,
-    user: Option<String>,
-    output: &OutputOptions,
-) -> Result<()> {
+async fn subscribe_issue(id: &str, user: Option<String>, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let user_value = user.unwrap_or_else(|| "me".to_string());
@@ -1491,10 +1472,7 @@ async fn subscribe_issue(
     "#;
 
     let result = client
-        .mutate(
-            mutation,
-            Some(json!({ "id": issue_id, "userId": user_id })),
-        )
+        .mutate(mutation, Some(json!({ "id": issue_id, "userId": user_id })))
         .await?;
 
     if result["data"]["issueSubscribe"]["success"].as_bool() == Some(true) {
@@ -1515,11 +1493,7 @@ async fn subscribe_issue(
     Ok(())
 }
 
-async fn unsubscribe_issue(
-    id: &str,
-    user: Option<String>,
-    output: &OutputOptions,
-) -> Result<()> {
+async fn unsubscribe_issue(id: &str, user: Option<String>, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let user_value = user.unwrap_or_else(|| "me".to_string());
@@ -1539,10 +1513,7 @@ async fn unsubscribe_issue(
     "#;
 
     let result = client
-        .mutate(
-            mutation,
-            Some(json!({ "id": issue_id, "userId": user_id })),
-        )
+        .mutate(mutation, Some(json!({ "id": issue_id, "userId": user_id })))
         .await?;
 
     if result["data"]["issueUnsubscribe"]["success"].as_bool() == Some(true) {

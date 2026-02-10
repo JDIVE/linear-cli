@@ -37,8 +37,8 @@ pub enum TeamCommands {
         #[arg(short, long)]
         description: Option<String>,
         /// Team color (hex)
-        #[arg(short, long = "color-hex", id = "team_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// Team icon
         #[arg(long)]
         icon: Option<String>,
@@ -57,8 +57,8 @@ pub enum TeamCommands {
         #[arg(short, long)]
         description: Option<String>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "team_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New icon
         #[arg(long)]
         icon: Option<String>,
@@ -100,16 +100,16 @@ pub async fn handle(cmd: TeamCommands, output: &OutputOptions) -> Result<()> {
             name,
             key,
             description,
-            color,
+            color_hex,
             icon,
-        } => create_team(&name, &key, description, color, icon, output).await,
+        } => create_team(&name, &key, description, color_hex, icon, output).await,
         TeamCommands::Update {
             id,
             name,
             description,
-            color,
+            color_hex,
             icon,
-        } => update_team(&id, name, description, color, icon, output).await,
+        } => update_team(&id, name, description, color_hex, icon, output).await,
     }
 }
 
