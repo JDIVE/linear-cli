@@ -60,8 +60,8 @@ pub enum InitiativeCommands {
         #[arg(long)]
         target_date: Option<String>,
         /// Initiative color (hex)
-        #[arg(long = "color-hex", id = "initiative_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
         /// Initiative icon
         #[arg(long)]
         icon: Option<String>,
@@ -92,8 +92,8 @@ pub enum InitiativeCommands {
         #[arg(long)]
         target_date: Option<String>,
         /// New color (hex)
-        #[arg(long = "color-hex", id = "initiative_color")]
-        color: Option<String>,
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
         /// New icon
         #[arg(long)]
         icon: Option<String>,
@@ -177,7 +177,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
             owner,
             status,
             target_date,
-            color,
+            color_hex,
             icon,
         } => {
             create_initiative(
@@ -187,7 +187,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
                 owner,
                 status,
                 target_date,
-                color,
+                color_hex,
                 icon,
                 output,
             )
@@ -201,7 +201,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
             owner,
             status,
             target_date,
-            color,
+            color_hex,
             icon,
             dry_run,
         } => {
@@ -213,7 +213,7 @@ pub async fn handle(cmd: InitiativeCommands, output: &OutputOptions) -> Result<(
                 owner,
                 status,
                 target_date,
-                color,
+                color_hex,
                 icon,
                 dry_run,
                 output,

@@ -43,8 +43,8 @@ pub enum StatusCommands {
         #[arg(long, default_value = "started")]
         r#type: String,
         /// State color (hex)
-        #[arg(short, long = "color-hex", id = "status_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// Position in the workflow
         #[arg(long)]
         position: Option<f64>,
@@ -60,8 +60,8 @@ pub enum StatusCommands {
         #[arg(short, long)]
         name: Option<String>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "status_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New position
         #[arg(long)]
         position: Option<f64>,
@@ -114,15 +114,15 @@ pub async fn handle(cmd: StatusCommands, output: &OutputOptions) -> Result<()> {
             team,
             name,
             r#type,
-            color,
+            color_hex,
             position,
-        } => create_status(&team, &name, &r#type, color, position, output).await,
+        } => create_status(&team, &name, &r#type, color_hex, position, output).await,
         StatusCommands::Update {
             id,
             name,
-            color,
+            color_hex,
             position,
-        } => update_status(&id, name, color, position, output).await,
+        } => update_status(&id, name, color_hex, position, output).await,
         StatusCommands::Archive { id } => archive_status(&id, output).await,
     }
 }

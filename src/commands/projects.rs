@@ -57,8 +57,8 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// Project color (hex)
-        #[arg(short, long = "color-hex", id = "project_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// Project start date (YYYY-MM-DD)
         #[arg(long)]
         start_date: Option<String>,
@@ -86,8 +86,8 @@ pub enum ProjectCommands {
         #[arg(long)]
         content: Option<String>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "project_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New icon
         #[arg(short, long)]
         icon: Option<String>,
@@ -196,8 +196,8 @@ pub enum ProjectStatusCommands {
         #[arg(long)]
         position: f64,
         /// Status color (hex)
-        #[arg(short, long = "color-hex", default_value = "#6B7280", id = "project_status_color")]
-        color: String,
+        #[arg(short, long = "color-hex", default_value = "#6B7280")]
+        color_hex: String,
         /// Status description
         #[arg(short, long)]
         description: Option<String>,
@@ -222,8 +222,8 @@ pub enum ProjectStatusCommands {
         #[arg(long)]
         position: Option<f64>,
         /// New color (hex)
-        #[arg(short, long = "color-hex", id = "project_status_color")]
-        color: Option<String>,
+        #[arg(short, long = "color-hex")]
+        color_hex: Option<String>,
         /// New description
         #[arg(short, long)]
         description: Option<String>,
@@ -320,7 +320,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             team,
             description,
             content,
-            color,
+            color_hex,
             start_date,
             target_date,
             status,
@@ -330,7 +330,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
                 &team,
                 description,
                 content,
-                color,
+                color_hex,
                 start_date,
                 target_date,
                 status,
@@ -343,7 +343,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
             name,
             description,
             content,
-            color,
+            color_hex,
             icon,
             start_date,
             target_date,
@@ -356,7 +356,7 @@ pub async fn handle(cmd: ProjectCommands, output: &OutputOptions) -> Result<()> 
                 name,
                 description,
                 content,
-                color,
+                color_hex,
                 icon,
                 start_date,
                 target_date,
@@ -393,11 +393,11 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
             name,
             r#type,
             position,
-            color,
+            color_hex,
             description,
             indefinite,
         } => {
-            create_project_status(&name, &r#type, position, &color, description, indefinite, output)
+            create_project_status(&name, &r#type, position, &color_hex, description, indefinite, output)
                 .await
         }
         ProjectStatusCommands::Update {
@@ -405,7 +405,7 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
             name,
             r#type,
             position,
-            color,
+            color_hex,
             description,
             indefinite,
         } => {
@@ -414,7 +414,7 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
                 name,
                 r#type,
                 position,
-                color,
+                color_hex,
                 description,
                 indefinite,
                 output,
