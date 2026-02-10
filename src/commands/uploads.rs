@@ -53,9 +53,7 @@ pub enum UploadCommands {
 pub async fn handle(cmd: UploadCommands) -> Result<()> {
     match cmd {
         UploadCommands::Fetch { url, file } => fetch_upload(&url, file).await,
-        UploadCommands::AttachUrl { issue, url, title } => {
-            attach_url(&issue, &url, title).await
-        }
+        UploadCommands::AttachUrl { issue, url, title } => attach_url(&issue, &url, title).await,
         UploadCommands::Upload {
             issue,
             file,
@@ -119,7 +117,9 @@ async fn attach_url(issue: &str, url: &str, title: Option<String>) -> Result<()>
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
     if result["data"]["attachmentCreate"]["success"].as_bool() == Some(true) {
         let attachment = &result["data"]["attachmentCreate"]["attachment"];
         println!(

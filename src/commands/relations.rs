@@ -147,11 +147,7 @@ fn format_relation_type(kind: &str, inverse: bool) -> String {
     }
 }
 
-async fn fetch_issue_summary(
-    client: &LinearClient,
-    issue_id: &str,
-    issue: &str,
-) -> Result<Value> {
+async fn fetch_issue_summary(client: &LinearClient, issue_id: &str, issue: &str) -> Result<Value> {
     let query = r#"
         query($id: String!) {
             issue(id: $id) {
@@ -321,7 +317,10 @@ async fn list_relations(issue: &str, output: &OutputOptions) -> Result<()> {
             relation_type: r["type"].as_str().unwrap_or("-").to_string(),
             identifier: r["issue"]["identifier"].as_str().unwrap_or("-").to_string(),
             title: truncate(r["issue"]["title"].as_str().unwrap_or(""), width),
-            state: r["issue"]["state"]["name"].as_str().unwrap_or("-").to_string(),
+            state: r["issue"]["state"]["name"]
+                .as_str()
+                .unwrap_or("-")
+                .to_string(),
             id: r["id"].as_str().unwrap_or("").to_string(),
         })
         .collect();

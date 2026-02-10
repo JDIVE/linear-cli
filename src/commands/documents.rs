@@ -133,7 +133,10 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run;
-            update_document(&id, title, content, icon, color_hex, project, dry_run, output).await
+            update_document(
+                &id, title, content, icon, color_hex, project, dry_run, output,
+            )
+            .await
         }
         DocumentCommands::Delete { id, force } => delete_document(&id, force).await,
     }

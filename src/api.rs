@@ -153,9 +153,7 @@ pub async fn resolve_issue_id(
                 break;
             }
 
-            after = page_info["endCursor"]
-                .as_str()
-                .map(|s| s.to_string());
+            after = page_info["endCursor"].as_str().map(|s| s.to_string());
             if after.is_none() {
                 break;
             }
@@ -326,11 +324,7 @@ pub async fn resolve_cycle_id(client: &LinearClient, team_id: &str, cycle: &str)
                 }
             }
 
-            if c["name"]
-                .as_str()
-                .map(|n| n.eq_ignore_ascii_case(cycle))
-                == Some(true)
-            {
+            if c["name"].as_str().map(|n| n.eq_ignore_ascii_case(cycle)) == Some(true) {
                 return Ok(id.to_string());
             }
         }
@@ -365,11 +359,7 @@ pub async fn resolve_state_id(client: &LinearClient, team_id: &str, state: &str)
         .unwrap_or(&empty);
 
     for s in states {
-        if s["name"]
-            .as_str()
-            .map(|n| n.eq_ignore_ascii_case(state))
-            == Some(true)
-        {
+        if s["name"].as_str().map(|n| n.eq_ignore_ascii_case(state)) == Some(true) {
             if let Some(id) = s["id"].as_str() {
                 return Ok(id.to_string());
             }
@@ -415,12 +405,9 @@ pub async fn resolve_label_ids(
             continue;
         }
 
-        let found = available.iter().find(|l| {
-            l["name"]
-                .as_str()
-                .map(|n| n.eq_ignore_ascii_case(label))
-                == Some(true)
-        });
+        let found = available
+            .iter()
+            .find(|l| l["name"].as_str().map(|n| n.eq_ignore_ascii_case(label)) == Some(true));
 
         if let Some(l) = found {
             if let Some(id) = l["id"].as_str() {
@@ -464,7 +451,9 @@ pub async fn resolve_user_id(client: &LinearClient, user: &str) -> Result<String
 
     let result = client.query(query, None).await?;
     let empty = vec![];
-    let users = result["data"]["users"]["nodes"].as_array().unwrap_or(&empty);
+    let users = result["data"]["users"]["nodes"]
+        .as_array()
+        .unwrap_or(&empty);
 
     for u in users {
         let name = u["name"].as_str().unwrap_or("");

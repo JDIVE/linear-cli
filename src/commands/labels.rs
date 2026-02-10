@@ -108,7 +108,18 @@ pub async fn handle(cmd: LabelCommands, output: &OutputOptions) -> Result<()> {
             color_hex,
             description,
             parent,
-        } => create_label(&name, &r#type, team, &color_hex, description, parent, output).await,
+        } => {
+            create_label(
+                &name,
+                &r#type,
+                team,
+                &color_hex,
+                description,
+                parent,
+                output,
+            )
+            .await
+        }
         LabelCommands::Update {
             id,
             r#type,

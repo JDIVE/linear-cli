@@ -580,7 +580,12 @@ async fn bulk_move_project(
                     output,
                 )?;
             } else {
-                println!("{} Failed to resolve project '{}': {}", "x".red(), project, e);
+                println!(
+                    "{} Failed to resolve project '{}': {}",
+                    "x".red(),
+                    project,
+                    e
+                );
             }
             return Ok(());
         }
@@ -749,11 +754,7 @@ async fn update_issue_state(client: &LinearClient, issue_id: &str, state: &str) 
     }
 }
 
-async fn update_issue_priority(
-    client: &LinearClient,
-    issue_id: &str,
-    priority: i32,
-) -> BulkResult {
+async fn update_issue_priority(client: &LinearClient, issue_id: &str, priority: i32) -> BulkResult {
     let (uuid, _team_id, identifier) = match get_issue_info(client, issue_id).await {
         Ok(info) => info,
         Err(e) => {
@@ -879,11 +880,7 @@ async fn update_issue_project(
     }
 }
 
-async fn update_issue_cycle(
-    client: &LinearClient,
-    issue_id: &str,
-    cycle: &str,
-) -> BulkResult {
+async fn update_issue_cycle(client: &LinearClient, issue_id: &str, cycle: &str) -> BulkResult {
     let (uuid, team_id, identifier) = match get_issue_info(client, issue_id).await {
         Ok(info) => info,
         Err(e) => {

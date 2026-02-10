@@ -397,8 +397,16 @@ async fn handle_project_status(cmd: ProjectStatusCommands, output: &OutputOption
             description,
             indefinite,
         } => {
-            create_project_status(&name, &r#type, position, &color_hex, description, indefinite, output)
-                .await
+            create_project_status(
+                &name,
+                &r#type,
+                position,
+                &color_hex,
+                description,
+                indefinite,
+                output,
+            )
+            .await
         }
         ProjectStatusCommands::Update {
             id,
@@ -811,7 +819,10 @@ async fn create_project_status(
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would create project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would create project status:".yellow().bold()
+            );
             println!("  Name: {}", name);
         }
         return Ok(());
@@ -842,7 +853,9 @@ async fn create_project_status(
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
     if result["data"]["projectStatusCreate"]["success"].as_bool() == Some(true) {
         let status = &result["data"]["projectStatusCreate"]["status"];
         if output.is_json() || output.has_template() {
@@ -913,7 +926,10 @@ async fn update_project_status(
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would update project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would update project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -967,7 +983,10 @@ async fn archive_project_status(id: &str, output: &OutputOptions) -> Result<()> 
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would archive project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would archive project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -1018,7 +1037,10 @@ async fn unarchive_project_status(id: &str, output: &OutputOptions) -> Result<()
                 output,
             )?;
         } else {
-            println!("{}", "[DRY RUN] Would unarchive project status:".yellow().bold());
+            println!(
+                "{}",
+                "[DRY RUN] Would unarchive project status:".yellow().bold()
+            );
             println!("  ID: {}", id);
         }
         return Ok(());
@@ -1036,9 +1058,7 @@ async fn unarchive_project_status(id: &str, output: &OutputOptions) -> Result<()
         }
     "#;
 
-    let result = client
-        .mutate(mutation, Some(json!({ "id": id })))
-        .await?;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
     if result["data"]["projectStatusUnarchive"]["success"].as_bool() == Some(true) {
         let entity = &result["data"]["projectStatusUnarchive"]["entity"];
         if output.is_json() || output.has_template() {

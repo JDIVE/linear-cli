@@ -380,7 +380,9 @@ async fn create_cycle(
         }
     "#;
 
-    let result = client.mutate(mutation, Some(json!({ "input": input }))).await?;
+    let result = client
+        .mutate(mutation, Some(json!({ "input": input })))
+        .await?;
     if result["data"]["cycleCreate"]["success"].as_bool() == Some(true) {
         let cycle = &result["data"]["cycleCreate"]["cycle"];
         if output.is_json() || output.has_template() {
