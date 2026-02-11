@@ -461,6 +461,7 @@ fn print_custom_view_details(view: &Value) {
     println!("ID: {}", view["id"].as_str().unwrap_or("-"));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_custom_view(
     name: &str,
     description: Option<String>,
@@ -707,8 +708,7 @@ fn parse_json_object(input: &str) -> Result<Value> {
         let stdin = io::stdin();
         let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
         lines.join("\n")
-    } else if input.starts_with('@') {
-        let path = &input[1..];
+    } else if let Some(path) = input.strip_prefix('@') {
         std::fs::read_to_string(path)?
     } else if Path::new(input).exists() {
         std::fs::read_to_string(input)?

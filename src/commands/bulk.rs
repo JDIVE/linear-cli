@@ -349,7 +349,6 @@ async fn resolve_issue_infos(
     let futures: Vec<_> = issues
         .iter()
         .map(|issue_id| {
-            let client = client;
             let issue_id = issue_id.clone();
             async move {
                 match get_issue_info(client, &issue_id).await {
@@ -856,8 +855,8 @@ fn parse_batch_create_issues(data: &str) -> Result<Vec<Value>> {
         let stdin = io::stdin();
         let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
         lines.join("\n")
-    } else if data.starts_with('@') {
-        std::fs::read_to_string(&data[1..])?
+    } else if let Some(path) = data.strip_prefix('@') {
+        std::fs::read_to_string(path)?
     } else if Path::new(data).exists() {
         std::fs::read_to_string(data)?
     } else {
