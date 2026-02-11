@@ -930,7 +930,7 @@ async fn create_issue(
     let final_team = team;
 
     // Resolve team key/name to UUID
-    let team_id = resolve_team_id(&client, final_team).await?;
+    let team_id = resolve_team_id(&client, final_team, &output.cache).await?;
 
     // Build the title with optional prefix from template
     let final_title = title.to_string();
@@ -956,7 +956,7 @@ async fn create_issue(
         input["stateId"] = json!(state_id);
     }
     if let Some(ref a) = assignee {
-        let assignee_id = resolve_user_id(&client, a).await?;
+        let assignee_id = resolve_user_id(&client, a, &output.cache).await?;
         input["assigneeId"] = json!(assignee_id);
     }
     if !labels.is_empty() {
@@ -1151,7 +1151,7 @@ async fn update_issue(
         input["stateId"] = json!(state_id);
     }
     if let Some(a) = assignee {
-        let assignee_id = resolve_user_id(&client, &a).await?;
+        let assignee_id = resolve_user_id(&client, &a, &output.cache).await?;
         input["assigneeId"] = json!(assignee_id);
     }
     if !labels.is_empty() {
@@ -1456,7 +1456,7 @@ async fn subscribe_issue(id: &str, user: Option<String>, output: &OutputOptions)
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let user_value = user.unwrap_or_else(|| "me".to_string());
-    let user_id = resolve_user_id(&client, &user_value).await?;
+    let user_id = resolve_user_id(&client, &user_value, &output.cache).await?;
 
     let mutation = r#"
         mutation($id: String!, $userId: String!) {
@@ -1497,7 +1497,7 @@ async fn unsubscribe_issue(id: &str, user: Option<String>, output: &OutputOption
     let client = LinearClient::new()?;
     let issue_id = resolve_issue_id(&client, id, true).await?;
     let user_value = user.unwrap_or_else(|| "me".to_string());
-    let user_id = resolve_user_id(&client, &user_value).await?;
+    let user_id = resolve_user_id(&client, &user_value, &output.cache).await?;
 
     let mutation = r#"
         mutation($id: String!, $userId: String!) {

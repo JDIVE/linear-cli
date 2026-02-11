@@ -500,7 +500,7 @@ async fn create_initiative(
         input["content"] = json!(body);
     }
     if let Some(owner) = owner {
-        let owner_id = resolve_user_id(&client, &owner).await?;
+        let owner_id = resolve_user_id(&client, &owner, &output.cache).await?;
         input["ownerId"] = json!(owner_id);
     }
     if let Some(status) = status {
@@ -579,7 +579,7 @@ async fn update_initiative(
         input["content"] = json!(body);
     }
     if let Some(owner) = owner {
-        let owner_id = resolve_user_id(&client, &owner).await?;
+        let owner_id = resolve_user_id(&client, &owner, &output.cache).await?;
         input["ownerId"] = json!(owner_id);
     }
     if let Some(status) = status {

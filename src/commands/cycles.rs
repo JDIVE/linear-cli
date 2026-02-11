@@ -102,7 +102,7 @@ async fn list_cycles(team: &str, include_all: bool, output: &OutputOptions) -> R
     let client = LinearClient::new()?;
 
     // Resolve team key/name to UUID
-    let team_id = resolve_team_id(&client, team).await?;
+    let team_id = resolve_team_id(&client, team, &output.cache).await?;
 
     let team_query = r#"
         query($teamId: String!) {
@@ -247,7 +247,7 @@ async fn current_cycle(team: &str, output: &OutputOptions) -> Result<()> {
     let client = LinearClient::new()?;
 
     // Resolve team key/name to UUID
-    let team_id = resolve_team_id(&client, team).await?;
+    let team_id = resolve_team_id(&client, team, &output.cache).await?;
 
     let query = r#"
         query($teamId: String!) {
@@ -355,7 +355,7 @@ async fn create_cycle(
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
-    let team_id = resolve_team_id(&client, team).await?;
+    let team_id = resolve_team_id(&client, team, &output.cache).await?;
 
     let input = json!({
         "teamId": team_id,

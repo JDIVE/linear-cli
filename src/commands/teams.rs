@@ -2,12 +2,12 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::{json, Value};
-use std::io::{self, BufRead};
 use tabled::{Table, Tabled};
 
 use crate::api::{resolve_team_id, LinearClient};
 use crate::cache::{Cache, CacheType};
 use crate::display_options;
+use crate::input::read_ids_from_stdin;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
 use crate::pagination::paginate_nodes;
 use crate::text::truncate;
@@ -79,18 +79,7 @@ pub async fn handle(cmd: TeamCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
         TeamCommands::List => list_teams(output).await,
         TeamCommands::Get { ids } => {
-            let final_ids: Vec<String> = if ids.is_empty() || (ids.len() == 1 && ids[0] == "-") {
-                let stdin = io::stdin();
-                stdin
-                    .lock()
-                    .lines()
-                    .map_while(Result::ok)
-                    .filter(|l| !l.trim().is_empty())
-                    .map(|l| l.trim().to_string())
-                    .collect()
-            } else {
-                ids
-            };
+            let final_ids = read_ids_from_stdin(ids);
             if final_ids.is_empty() {
                 anyhow::bail!("No team IDs provided. Provide IDs or pipe them via stdin.");
             }
@@ -424,7 +413,7 @@ async fn update_team(
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
-    let team_id = resolve_team_id(&client, id).await?;
+    let team_id = resolve_team_id(&client, id, &output.cache).await?;
 
     let mut input = json!({});
     if let Some(n) = name {
