@@ -98,6 +98,7 @@ fn test_bulk_help() {
     assert!(stdout.contains("project"));
     assert!(stdout.contains("cycle"));
     assert!(stdout.contains("archive"));
+    assert!(stdout.contains("create"));
 }
 
 #[test]
@@ -106,6 +107,19 @@ fn test_search_help() {
     assert_eq!(code, 0);
     assert!(stdout.contains("issues"));
     assert!(stdout.contains("projects"));
+    assert!(stdout.contains("documents"));
+    assert!(stdout.contains("semantic"));
+}
+
+#[test]
+fn test_custom_views_help() {
+    let (code, stdout, _stderr) = run_cli(&["custom-views", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("get"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("update"));
+    assert!(stdout.contains("delete"));
 }
 
 #[test]
@@ -140,6 +154,29 @@ fn test_documents_help() {
     assert!(stdout.contains("list"));
     assert!(stdout.contains("create"));
     assert!(stdout.contains("update"));
+}
+
+#[test]
+fn test_comments_help() {
+    let (code, stdout, _stderr) = run_cli(&["comments", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("update"));
+    assert!(stdout.contains("delete"));
+    assert!(stdout.contains("resolve"));
+    assert!(stdout.contains("unresolve"));
+}
+
+#[test]
+fn test_projects_updates_help() {
+    let (code, stdout, _stderr) = run_cli(&["projects", "updates", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("update"));
+    assert!(stdout.contains("archive"));
+    assert!(stdout.contains("unarchive"));
 }
 
 #[test]

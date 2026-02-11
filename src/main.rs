@@ -20,9 +20,9 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use commands::{
-    auth, bulk, comments, cycles, doctor, documents, export, favorites, git, history, initiatives,
-    interactive, issues, labels, metrics, notifications, projects, relations, roadmaps, search,
-    statuses, sync, teams, templates, time, triage, uploads, users, watch,
+    auth, bulk, comments, custom_views, cycles, doctor, documents, export, favorites, git, history,
+    initiatives, interactive, issues, labels, metrics, notifications, projects, relations,
+    roadmaps, search, statuses, sync, teams, templates, time, triage, uploads, users, watch,
 };
 use error::CliError;
 use output::print_json;
@@ -332,11 +332,13 @@ enum Commands {
         #[command(subcommand)]
         action: cycles::CycleCommands,
     },
-    /// Manage comments - add and view issue comments
+    /// Manage comments - add, edit, resolve, and delete issue comments
     #[command(aliases = ["cm", "com"])]
     #[command(after_help = r#"EXAMPLES:
     linear comments list ISSUE_ID           # List comments on issue
-    linear cm create ISSUE_ID -b "LGTM!"    # Add a comment"#)]
+    linear cm create ISSUE_ID -b "LGTM!"    # Add a comment
+    linear cm update COMMENT_ID -b "Updated"
+    linear cm resolve COMMENT_ID"#)]
     Comments {
         #[command(subcommand)]
         action: comments::CommentCommands,
@@ -352,14 +354,28 @@ enum Commands {
         #[command(subcommand)]
         action: documents::DocumentCommands,
     },
-    /// Search across Linear - find issues and projects
+    /// Search across Linear - issues, projects, documents, and semantic matches
     #[command(alias = "s")]
     #[command(after_help = r#"EXAMPLES:
     linear search issues "auth bug"         # Search issues
-    linear s projects "backend"             # Search projects"#)]
+    linear s projects "backend"             # Search projects
+    linear s documents "runbook"            # Search documents
+    linear s semantic "incident response"   # Semantic search"#)]
     Search {
         #[command(subcommand)]
         action: search::SearchCommands,
+    },
+    /// Manage custom views - list, create, update, delete saved views
+    #[command(aliases = ["cv", "cviews"])]
+    #[command(after_help = r#"EXAMPLES:
+    linear custom-views list                 # List custom views
+    linear cv get VIEW_ID                    # View custom view details
+    linear cv create "My Queue" --team ENG --shared
+    linear cv update VIEW_ID --name "New Name"
+    linear cv delete VIEW_ID"#)]
+    CustomViews {
+        #[command(subcommand)]
+        action: custom_views::CustomViewCommands,
     },
     /// Sync operations - compare local folders with Linear
     #[command(alias = "sy")]
@@ -833,6 +849,7 @@ async fn run_command(
         Commands::Comments { action } => comments::handle(action, output).await?,
         Commands::Documents { action } => documents::handle(action, output).await?,
         Commands::Search { action } => search::handle(action, output).await?,
+        Commands::CustomViews { action } => custom_views::handle(action, output).await?,
         Commands::Sync { action } => sync::handle(action, output).await?,
         Commands::Statuses { action } => statuses::handle(action, output).await?,
         Commands::Git { action } => git::handle(action).await?,

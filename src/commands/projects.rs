@@ -172,6 +172,30 @@ pub enum ProjectUpdateCommands {
         #[arg(long)]
         health: Option<String>,
     },
+    /// Update a project update
+    Update {
+        /// Project update ID
+        id: String,
+        /// Updated body (Markdown supported). Use "-" to read from stdin.
+        #[arg(short, long)]
+        body: Option<String>,
+        /// Updated health (onTrack, atRisk, offTrack)
+        #[arg(long)]
+        health: Option<String>,
+        /// Hide diff in timeline
+        #[arg(long)]
+        is_diff_hidden: Option<bool>,
+    },
+    /// Archive a project update
+    Archive {
+        /// Project update ID
+        id: String,
+    },
+    /// Unarchive a project update
+    Unarchive {
+        /// Project update ID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -373,6 +397,14 @@ async fn handle_project_updates(cmd: ProjectUpdateCommands, output: &OutputOptio
             body,
             health,
         } => create_project_update(&project, &body, health, output).await,
+        ProjectUpdateCommands::Update {
+            id,
+            body,
+            health,
+            is_diff_hidden,
+        } => update_project_update(&id, body, health, is_diff_hidden, output).await,
+        ProjectUpdateCommands::Archive { id } => archive_project_update(&id, output).await,
+        ProjectUpdateCommands::Unarchive { id } => unarchive_project_update(&id, output).await,
     }
 }
 
@@ -623,6 +655,140 @@ async fn create_project_update(
         anyhow::bail!("Failed to create project update");
     }
 
+    Ok(())
+}
+
+async fn update_project_update(
+    id: &str,
+    body: Option<String>,
+    health: Option<String>,
+    is_diff_hidden: Option<bool>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mut input = json!({});
+
+    if let Some(body) = body {
+        let final_body = if body == "-" {
+            let stdin = io::stdin();
+            let lines: Vec<String> = stdin.lock().lines().map_while(Result::ok).collect();
+            lines.join("\n")
+        } else {
+            body
+        };
+        input["body"] = json!(final_body);
+    }
+    if let Some(h) = health {
+        let normalized = normalize_project_health(&h)?;
+        input["health"] = json!(normalized);
+    }
+    if let Some(hidden) = is_diff_hidden {
+        input["isDiffHidden"] = json!(hidden);
+    }
+
+    let has_changes = input.as_object().map(|m| !m.is_empty()).unwrap_or(false);
+    if !has_changes {
+        anyhow::bail!("No changes provided. Use --body, --health, or --is-diff-hidden.");
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: ProjectUpdateUpdateInput!) {
+            projectUpdateUpdate(id: $id, input: $input) {
+                success
+                projectUpdate {
+                    id
+                    body
+                    health
+                    updatedAt
+                    url
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(mutation, Some(json!({ "id": id, "input": input })))
+        .await?;
+
+    if result["data"]["projectUpdateUpdate"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to update project update");
+    }
+    let update = &result["data"]["projectUpdateUpdate"]["projectUpdate"];
+
+    if output.is_json() || output.has_template() {
+        print_json(update, output)?;
+        return Ok(());
+    }
+
+    println!("{} Project update modified", "+".green());
+    println!("  ID: {}", update["id"].as_str().unwrap_or(""));
+    println!("  URL: {}", update["url"].as_str().unwrap_or(""));
+    Ok(())
+}
+
+async fn archive_project_update(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mutation = r#"
+        mutation($id: String!) {
+            projectUpdateArchive(id: $id) {
+                success
+                entity {
+                    id
+                    body
+                    health
+                    updatedAt
+                    url
+                }
+            }
+        }
+    "#;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["projectUpdateArchive"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to archive project update");
+    }
+    let update = &result["data"]["projectUpdateArchive"]["entity"];
+
+    if output.is_json() || output.has_template() {
+        print_json(update, output)?;
+        return Ok(());
+    }
+
+    println!("{} Project update archived", "+".green());
+    println!("  ID: {}", update["id"].as_str().unwrap_or(id));
+    Ok(())
+}
+
+async fn unarchive_project_update(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mutation = r#"
+        mutation($id: String!) {
+            projectUpdateUnarchive(id: $id) {
+                success
+                entity {
+                    id
+                    body
+                    health
+                    updatedAt
+                    url
+                }
+            }
+        }
+    "#;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["projectUpdateUnarchive"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to unarchive project update");
+    }
+    let update = &result["data"]["projectUpdateUnarchive"]["entity"];
+
+    if output.is_json() || output.has_template() {
+        print_json(update, output)?;
+        return Ok(());
+    }
+
+    println!("{} Project update unarchived", "+".green());
+    println!("  ID: {}", update["id"].as_str().unwrap_or(id));
     Ok(())
 }
 

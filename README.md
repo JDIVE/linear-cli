@@ -57,7 +57,8 @@ linear-cli g pr LIN-123
 | `initiatives` | `ini` | Manage initiatives |
 | `relations` | `rel` | Manage issue relations |
 | `git` | `g` | Git branch operations and PR creation |
-| `search` | `s` | Search issues and projects |
+| `search` | `s` | Search issues, projects, documents, and semantic matches |
+| `custom-views` | `cv` | Manage custom views |
 | `comments` | `cm` | Manage issue comments |
 | `uploads` | `up` | Fetch and attach uploads |
 | `bulk` | `b` | Bulk operations on issues |

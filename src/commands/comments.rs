@@ -30,6 +30,35 @@ pub enum CommentCommands {
         #[arg(short, long)]
         parent_id: Option<String>,
     },
+    /// Update an existing comment
+    Update {
+        /// Comment ID
+        id: String,
+        /// Updated comment body (Markdown supported)
+        #[arg(short, long)]
+        body: String,
+        /// Avoid setting edited timestamp
+        #[arg(long)]
+        skip_edited_at: bool,
+    },
+    /// Delete a comment
+    Delete {
+        /// Comment ID
+        id: String,
+    },
+    /// Resolve a comment thread
+    Resolve {
+        /// Comment ID to resolve
+        id: String,
+        /// Optional resolving comment ID
+        #[arg(long)]
+        resolving_comment_id: Option<String>,
+    },
+    /// Re-open a resolved comment thread
+    Unresolve {
+        /// Comment ID to unresolve
+        id: String,
+    },
 }
 
 #[derive(Tabled)]
@@ -51,7 +80,18 @@ pub async fn handle(cmd: CommentCommands, output: &OutputOptions) -> Result<()> 
             issue_id,
             body,
             parent_id,
-        } => create_comment(&issue_id, &body, parent_id).await,
+        } => create_comment(&issue_id, &body, parent_id, output).await,
+        CommentCommands::Update {
+            id,
+            body,
+            skip_edited_at,
+        } => update_comment(&id, &body, skip_edited_at, output).await,
+        CommentCommands::Delete { id } => delete_comment(&id, output).await,
+        CommentCommands::Resolve {
+            id,
+            resolving_comment_id,
+        } => resolve_comment(&id, resolving_comment_id, output).await,
+        CommentCommands::Unresolve { id } => unresolve_comment(&id, output).await,
     }
 }
 
@@ -206,7 +246,12 @@ async fn fetch_issue_comments(
     .await
 }
 
-async fn create_comment(issue_id: &str, body: &str, parent_id: Option<String>) -> Result<()> {
+async fn create_comment(
+    issue_id: &str,
+    body: &str,
+    parent_id: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
     let client = LinearClient::new()?;
 
     let mut input = json!({
@@ -239,6 +284,10 @@ async fn create_comment(issue_id: &str, body: &str, parent_id: Option<String>) -
 
     if result["data"]["commentCreate"]["success"].as_bool() == Some(true) {
         let comment = &result["data"]["commentCreate"]["comment"];
+        if output.is_json() || output.has_template() {
+            print_json(comment, output)?;
+            return Ok(());
+        }
         let issue_identifier = comment["issue"]["identifier"].as_str().unwrap_or("");
         let issue_title = comment["issue"]["title"].as_str().unwrap_or("");
 
@@ -267,5 +316,177 @@ async fn create_comment(issue_id: &str, body: &str, parent_id: Option<String>) -
         anyhow::bail!("Failed to create comment");
     }
 
+    Ok(())
+}
+
+async fn update_comment(
+    id: &str,
+    body: &str,
+    skip_edited_at: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let mutation = r#"
+        mutation($id: String!, $input: CommentUpdateInput!, $skipEditedAt: Boolean) {
+            commentUpdate(id: $id, input: $input, skipEditedAt: $skipEditedAt) {
+                success
+                comment {
+                    id
+                    body
+                    updatedAt
+                    issue { identifier title }
+                    user { name }
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({
+                "id": id,
+                "input": { "body": body },
+                "skipEditedAt": skip_edited_at,
+            })),
+        )
+        .await?;
+
+    if result["data"]["commentUpdate"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to update comment");
+    }
+
+    let comment = &result["data"]["commentUpdate"]["comment"];
+    if output.is_json() || output.has_template() {
+        print_json(comment, output)?;
+        return Ok(());
+    }
+
+    println!("{} Updated comment {}", "+".green(), id.cyan());
+    if let Some(identifier) = comment["issue"]["identifier"].as_str() {
+        println!(
+            "  Issue: {} {}",
+            identifier,
+            comment["issue"]["title"].as_str().unwrap_or("")
+        );
+    }
+    println!(
+        "  Author: {}",
+        comment["user"]["name"].as_str().unwrap_or("-")
+    );
+    Ok(())
+}
+
+async fn delete_comment(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mutation = r#"
+        mutation($id: String!) {
+            commentDelete(id: $id) {
+                success
+                entityId
+            }
+        }
+    "#;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["commentDelete"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to delete comment");
+    }
+
+    if output.is_json() || output.has_template() {
+        print_json(&result["data"]["commentDelete"], output)?;
+        return Ok(());
+    }
+
+    println!("{} Deleted comment {}", "+".green(), id.cyan());
+    Ok(())
+}
+
+async fn resolve_comment(
+    id: &str,
+    resolving_comment_id: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mutation = r#"
+        mutation($id: String!, $resolvingCommentId: String) {
+            commentResolve(id: $id, resolvingCommentId: $resolvingCommentId) {
+                success
+                comment {
+                    id
+                    body
+                    updatedAt
+                    issue { identifier title }
+                }
+            }
+        }
+    "#;
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({
+                "id": id,
+                "resolvingCommentId": resolving_comment_id
+            })),
+        )
+        .await?;
+
+    if result["data"]["commentResolve"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to resolve comment");
+    }
+
+    let comment = &result["data"]["commentResolve"]["comment"];
+    if output.is_json() || output.has_template() {
+        print_json(comment, output)?;
+        return Ok(());
+    }
+
+    println!("{} Resolved comment {}", "+".green(), id.cyan());
+    if let Some(identifier) = comment["issue"]["identifier"].as_str() {
+        println!(
+            "  Issue: {} {}",
+            identifier,
+            comment["issue"]["title"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+async fn unresolve_comment(id: &str, output: &OutputOptions) -> Result<()> {
+    let client = LinearClient::new()?;
+    let mutation = r#"
+        mutation($id: String!) {
+            commentUnresolve(id: $id) {
+                success
+                comment {
+                    id
+                    body
+                    updatedAt
+                    issue { identifier title }
+                }
+            }
+        }
+    "#;
+    let result = client.mutate(mutation, Some(json!({ "id": id }))).await?;
+
+    if result["data"]["commentUnresolve"]["success"].as_bool() != Some(true) {
+        anyhow::bail!("Failed to unresolve comment");
+    }
+
+    let comment = &result["data"]["commentUnresolve"]["comment"];
+    if output.is_json() || output.has_template() {
+        print_json(comment, output)?;
+        return Ok(());
+    }
+
+    println!("{} Unresolved comment {}", "+".green(), id.cyan());
+    if let Some(identifier) = comment["issue"]["identifier"].as_str() {
+        println!(
+            "  Issue: {} {}",
+            identifier,
+            comment["issue"]["title"].as_str().unwrap_or("")
+        );
+    }
     Ok(())
 }

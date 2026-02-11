@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bulk;
 pub mod cache;
 pub mod comments;
+pub mod custom_views;
 pub mod cycles;
 pub mod doctor;
 pub mod documents;
