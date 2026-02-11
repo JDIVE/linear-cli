@@ -1,147 +1,121 @@
 # Agent Skills
 
-`linear-cli` includes Agent Skills for AI coding assistants. Skills provide contextual documentation that agents can load when performing Linear tasks.
-
-## Installation
-
-```bash
-# Install all skills
-npx skills add Finesssee/linear-cli
-
-# Install specific skill
-npx skills add Finesssee/linear-cli --skill linear-list
-
-# Install globally (available in all projects)
-npx skills add Finesssee/linear-cli -g
-```
-
-## Available Skills (27 total)
-
-### Issues
-| Skill | Description |
-|-------|-------------|
-| `linear-list` | List and get issues |
-| `linear-create` | Create issues |
-| `linear-update` | Update issues (status, priority, assignee, labels) |
-| `linear-workflow` | Start/stop work, get current issue context |
-
-### Git
-| Skill | Description |
-|-------|-------------|
-| `linear-git` | Branches, checkout, context |
-| `linear-pr` | Create GitHub PRs |
-
-### Planning
-| Skill | Description |
-|-------|-------------|
-| `linear-projects` | Manage projects |
-| `linear-roadmaps` | View roadmaps |
-| `linear-initiatives` | High-level tracking |
-| `linear-cycles` | Sprint cycles |
-
-### Organization
-| Skill | Description |
-|-------|-------------|
-| `linear-teams` | Teams and users |
-| `linear-labels` | Label management |
-| `linear-relations` | Issue relationships (blocks, parent/child) |
-| `linear-templates` | Issue templates |
-
-### Operations
-| Skill | Description |
-|-------|-------------|
-| `linear-bulk` | Bulk operations |
-| `linear-export` | Export to CSV/Markdown |
-| `linear-triage` | Triage inbox |
-| `linear-favorites` | Quick access |
-
-### Tracking
-| Skill | Description |
-|-------|-------------|
-| `linear-metrics` | Velocity, burndown, progress |
-| `linear-history` | Issue activity logs |
-| `linear-time` | Time tracking |
-| `linear-watch` | Watch for updates |
-
-### Other
-| Skill | Description |
-|-------|-------------|
-| `linear-search` | Search issues and projects |
-| `linear-notifications` | Manage notifications |
-| `linear-documents` | Documentation |
-| `linear-uploads` | Download attachments |
-| `linear-config` | Auth, API keys, workspaces, diagnostics |
+`linear-cli` includes pre-built skills for AI coding assistants. Skills provide contextual documentation that agents can load when performing specific tasks.
 
 ## Supported Agents
 
-Skills work with any agent that supports the [Agent Skills](https://agentskills.io) format:
+| Agent | Skills Location | Skill File |
+|-------|-----------------|------------|
+| Claude Code | `.claude/skills/` | `SKILL.md` |
+| OpenAI Codex | `.codex/skills/` | `AGENTS.md` |
 
-- Claude Code
-- OpenAI Codex
-- Cursor
-- Amp
-- Roo Code
-- Gemini CLI
-- And many more
+## Available Skills
 
-## Why Skills?
+| Skill | Description |
+|-------|-------------|
+| `linear-issues` | Manage issues - list, create, update, start/stop work |
+| `linear-pr` | Create GitHub PRs linked to Linear issues |
+| `linear-search` | Search issues and projects |
+| `linear-uploads` | Download attachments and images |
 
-Skills are 10-50x more token-efficient than MCP tools:
+## Installation
 
-- **MCP tools**: Each API call returns full JSON, uses many tokens
-- **Skills**: Agent learns commands once, uses CLI directly
+### Option 1: Clone to Your Project
 
-## Viewing Installed Skills
+Copy the skills directories to your project:
 
 ```bash
-# List installed skills
-npx skills list
+# For Claude Code
+cp -r /path/to/linear-cli/.claude/skills/* /your/project/.claude/skills/
 
-# List globally installed
-npx skills list -g
+# For OpenAI Codex
+cp -r /path/to/linear-cli/.codex/skills/* /your/project/.codex/skills/
 ```
 
-## Skill Contents
+### Option 2: Symlink (Recommended)
 
-Each skill contains:
+Symlink the skills from your linear-cli installation:
 
-- **Frontmatter**: Name, description, allowed tools
-- **Commands**: CLI commands with examples
-- **Flags**: Agent-optimized flags (`--output json`, `--compact`, etc.)
-- **Exit codes**: For error handling
-- **Workflows**: Common task patterns
+```bash
+# Find where linear-cli is installed
+which linear-cli  # or: where linear-cli on Windows
 
-Example skill structure:
+# Assuming it's installed via cargo
+SKILLS_SRC="$HOME/.cargo/git/checkouts/linear-cli-*/master"
+
+# For Claude Code
+ln -s "$SKILLS_SRC/.claude/skills" /your/project/.claude/skills
+
+# For OpenAI Codex
+ln -s "$SKILLS_SRC/.codex/skills" /your/project/.codex/skills
+```
+
+### Option 3: Global Installation
+
+For Claude Code, you can install skills globally:
+
+```bash
+# Copy to global Claude config
+mkdir -p ~/.claude/skills
+cp -r /path/to/linear-cli/.claude/skills/* ~/.claude/skills/
+```
+
+## How Skills Work
+
+### Claude Code
+
+Claude Code loads skills based on the `description` field in `SKILL.md`. When you ask about Linear issues, PRs, or uploads, Claude automatically loads the relevant skill.
+
+Example `SKILL.md` structure:
 ```yaml
 ---
-name: linear-list
-description: List and get Linear issues...
+name: linear-issues
+description: Manage Linear issues - list, create, update, start/stop work.
 allowed-tools: Bash
 ---
 
-# List/Get Issues
+# Linear Issues
+[Documentation content...]
+```
 
+### OpenAI Codex
+
+Codex reads `AGENTS.md` files for contextual instructions. Place skills in `.codex/skills/` directories.
+
+## Verifying Installation
+
+### Claude Code
+
+Ask Claude: "What Linear commands are available?"
+
+Claude should reference the skills and show commands like:
+- `linear-cli i list`
+- `linear-cli i create "Title" -t TEAM`
+- etc.
+
+### OpenAI Codex
+
+Ask Codex to work with Linear issues. It should use `linear-cli` commands rather than suggesting MCP tools.
+
+## Creating Custom Skills
+
+You can extend the skills or create new ones:
+
+```bash
+# Create a new skill for your workflow
+mkdir -p .claude/skills/my-workflow
+cat > .claude/skills/my-workflow/SKILL.md << 'EOF'
+---
+name: my-workflow
+description: Custom Linear workflow for my team
+allowed-tools: Bash
+---
+
+# My Custom Workflow
+
+## Daily Standup
 \`\`\`bash
-linear-cli i list --output json
+linear-cli i list -s "In Progress" --mine
 \`\`\`
-```
-
-## Updating Skills
-
-```bash
-# Check for updates
-npx skills check
-
-# Update all skills
-npx skills update
-```
-
-## Removing Skills
-
-```bash
-# Remove specific skill
-npx skills remove --skill linear-list
-
-# Remove all linear-cli skills
-npx skills remove Finesssee/linear-cli
+EOF
 ```

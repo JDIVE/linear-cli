@@ -2,18 +2,6 @@
 
 When using AI coding assistants (Claude Code, Cursor, Windsurf, Copilot, OpenAI Codex, etc.), `linear-cli` provides significant advantages over Linear MCP tools.
 
-## Install Agent Skills (Recommended)
-
-The easiest way to integrate linear-cli with your AI agent:
-
-```bash
-npx skills add Finesssee/linear-cli
-```
-
-This installs **27 Agent Skills** covering all CLI features. Your agent automatically loads the right skill based on the task.
-
-See [skills.md](skills.md) for the full list of available skills.
-
 ## Why Use linear-cli with AI Agents
 
 | Aspect | linear-cli | Linear MCP |
@@ -22,7 +10,6 @@ See [skills.md](skills.md) for the full list of available skills.
 | Latency | Single CLI execution | Multiple MCP round-trips |
 | Feature coverage | Full API | Limited subset |
 | Offline caching | Supported | Not available |
-| Agent Skills | 27 skills included | Not available |
 
 ## Ready-to-Copy Agent Rules
 
