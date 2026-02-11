@@ -61,11 +61,11 @@ async fn issue_history(id: &str, limit: usize, output: &OutputOptions) -> Result
                         toPriority
                         fromEstimate
                         toEstimate
-                        addedLabels { nodes { name } }
-                        removedLabels { nodes { name } }
+                        addedLabels { name }
+                        removedLabels { name }
                         relationChanges {
                             type
-                            issue { identifier }
+                            identifier
                         }
                     }
                 }
@@ -151,7 +151,7 @@ async fn issue_history(id: &str, limit: usize, output: &OutputOptions) -> Result
                     );
                 }
                 // Labels added
-                else if let Some(labels) = h["addedLabels"]["nodes"].as_array() {
+                else if let Some(labels) = h["addedLabels"].as_array() {
                     if !labels.is_empty() {
                         action = "Labels +".to_string();
                         details = labels
@@ -162,12 +162,29 @@ async fn issue_history(id: &str, limit: usize, output: &OutputOptions) -> Result
                     }
                 }
                 // Labels removed
-                else if let Some(labels) = h["removedLabels"]["nodes"].as_array() {
+                else if let Some(labels) = h["removedLabels"].as_array() {
                     if !labels.is_empty() {
                         action = "Labels -".to_string();
                         details = labels
                             .iter()
                             .filter_map(|l| l["name"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                    }
+                }
+                // Relationship changes
+                else if let Some(relations) = h["relationChanges"].as_array() {
+                    if !relations.is_empty() {
+                        action = "Relation".to_string();
+                        details = relations
+                            .iter()
+                            .map(|r| {
+                                format!(
+                                    "{} {}",
+                                    r["type"].as_str().unwrap_or("changed"),
+                                    r["identifier"].as_str().unwrap_or("-")
+                                )
+                            })
                             .collect::<Vec<_>>()
                             .join(", ");
                     }
