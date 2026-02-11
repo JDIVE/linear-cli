@@ -180,6 +180,7 @@ pub async fn paginate_nodes(
 ///     },
 /// ).await?;
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_nodes<F, Fut>(
     client: &LinearClient,
     query: &str,

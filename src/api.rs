@@ -240,6 +240,7 @@ pub async fn resolve_user_id(
 }
 
 /// Resolve a label name to a UUID.
+#[allow(dead_code)]
 pub async fn resolve_label_id(
     client: &LinearClient,
     label: &str,
@@ -386,7 +387,9 @@ pub async fn resolve_project_id(
             .await?;
 
         let empty = vec![];
-        let nodes = result["data"]["projects"]["nodes"].as_array().unwrap_or(&empty);
+        let nodes = result["data"]["projects"]["nodes"]
+            .as_array()
+            .unwrap_or(&empty);
         if let Some(node) = nodes.first() {
             if let Some(id) = node["id"].as_str() {
                 return Ok(id.to_string());
@@ -670,6 +673,7 @@ fn find_user_id(users: &[Value], user: &str) -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
 fn find_label_id(labels: &[Value], label: &str) -> Option<String> {
     for l in labels {
         let name = l["name"].as_str().unwrap_or("");

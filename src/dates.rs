@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{Datelike, Duration, Local, NaiveDate};
 
 /// Parse due date shorthand into an ISO date string (YYYY-MM-DD)

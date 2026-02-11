@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Typed structs for Linear API responses.
 //!
 //! These types provide structured access to Linear API data instead of working
