@@ -1,6 +1,6 @@
 [package]
 name = "linear-cli"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "A powerful CLI for Linear.app - manage issues, projects, cycles, and more from your terminal"
 authors = ["scwrcd"]
@@ -28,8 +28,13 @@ dirs = "5"
 toml = "0.8"
 anyhow = "1"
 dialoguer = "0.11"
-console = "0.15"
 futures = "0.3"
-indicatif = "0.17"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+rand = "0.8"
+csv = "1"
+keyring = { version = "3", optional = true }
+
+[features]
+default = []
+secure-storage = ["keyring"]

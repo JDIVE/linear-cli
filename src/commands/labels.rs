@@ -251,7 +251,7 @@ async fn create_label(
 
     if label_type == "issue" {
         let team = team.ok_or_else(|| anyhow::anyhow!("--team is required for issue labels"))?;
-        let team_id = resolve_team_id(&client, &team).await?;
+        let team_id = resolve_team_id(&client, &team, &output.cache).await?;
         input["teamId"] = json!(team_id);
     } else if description.is_some() {
         anyhow::bail!("Description is only supported for issue labels.");

@@ -2,8 +2,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::config;
 
 /// Default cache TTL in seconds (1 hour)
 const DEFAULT_TTL_SECONDS: u64 = 3600;
@@ -118,12 +121,14 @@ impl Cache {
         })
     }
 
-    /// Get the cache directory path
+    /// Get the cache directory path, scoped by workspace/profile
     fn cache_dir() -> Result<PathBuf> {
+        let profile = config::current_profile().unwrap_or_else(|_| "default".to_string());
         let config_dir = dirs::config_dir()
             .context("Could not find config directory")?
             .join("linear-cli")
-            .join("cache");
+            .join("cache")
+            .join(profile);
         Ok(config_dir)
     }
 
@@ -162,7 +167,7 @@ impl Cache {
         serde_json::from_str(&content).ok()
     }
 
-    /// Set cached data
+    /// Set cached data using atomic file writes
     pub fn set(&self, cache_type: CacheType, data: Value) -> Result<()> {
         let path = self.cache_path(cache_type);
         let timestamp = SystemTime::now()
@@ -177,7 +182,38 @@ impl Cache {
         };
 
         let content = serde_json::to_string_pretty(&entry)?;
-        fs::write(path, content)?;
+
+        // Atomic write: write to temp file, sync, then rename
+        // Use secure permissions on Unix (0600)
+        let temp_path = path.with_extension("tmp");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut file = fs::File::create(&temp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        // Atomic rename
+        // On Windows, fs::rename fails if the destination exists, so remove it first
+        #[cfg(windows)]
+        {
+            let _ = fs::remove_file(&path);
+        }
+        fs::rename(&temp_path, &path)?;
         Ok(())
     }
 
@@ -263,10 +299,12 @@ impl Cache {
 }
 
 pub fn cache_dir_path() -> Result<PathBuf> {
+    let profile = config::current_profile().unwrap_or_else(|_| "default".to_string());
     let config_dir = dirs::config_dir()
         .context("Could not find config directory")?
         .join("linear-cli")
-        .join("cache");
+        .join("cache")
+        .join(profile);
     Ok(config_dir)
 }
 
@@ -327,5 +365,113 @@ mod tests {
             data: serde_json::json!({"test": "data"}),
         };
         assert!(!entry.is_valid());
+    }
+
+    #[test]
+    fn test_cache_entry_age() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let entry = CacheEntry {
+            timestamp: now - 60, // 60 seconds ago
+            ttl_seconds: 3600,
+            data: serde_json::json!({}),
+        };
+        let age = entry.age_seconds();
+        assert!(age >= 60 && age <= 62); // Allow small drift
+    }
+
+    #[test]
+    fn test_cache_type_filename() {
+        assert_eq!(CacheType::Teams.filename(), "teams.json");
+        assert_eq!(CacheType::Users.filename(), "users.json");
+        assert_eq!(CacheType::Statuses.filename(), "statuses.json");
+        assert_eq!(CacheType::Labels.filename(), "labels.json");
+        assert_eq!(CacheType::Projects.filename(), "projects.json");
+    }
+
+    #[test]
+    fn test_cache_type_display_name() {
+        assert_eq!(CacheType::Teams.display_name(), "Teams");
+        assert_eq!(CacheType::Users.display_name(), "Users");
+    }
+
+    #[test]
+    fn test_cache_type_all() {
+        let all = CacheType::all();
+        assert_eq!(all.len(), 5);
+    }
+
+    #[test]
+    fn test_cache_options_effective_ttl() {
+        let opts_default = CacheOptions::default();
+        assert_eq!(opts_default.effective_ttl_seconds(), DEFAULT_TTL_SECONDS);
+
+        let opts_custom = CacheOptions {
+            ttl_seconds: Some(7200),
+            no_cache: false,
+        };
+        assert_eq!(opts_custom.effective_ttl_seconds(), 7200);
+    }
+
+    #[test]
+    fn test_cache_status_age_display() {
+        let status_seconds = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: Some(45),
+            size_bytes: None,
+            item_count: None,
+        };
+        assert_eq!(status_seconds.age_display(), "45s");
+
+        let status_minutes = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: Some(120),
+            size_bytes: None,
+            item_count: None,
+        };
+        assert_eq!(status_minutes.age_display(), "2m");
+
+        let status_hours = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: Some(3660),
+            size_bytes: None,
+            item_count: None,
+        };
+        assert_eq!(status_hours.age_display(), "1h 1m");
+    }
+
+    #[test]
+    fn test_cache_status_size_display() {
+        let status_bytes = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: None,
+            size_bytes: Some(512),
+            item_count: None,
+        };
+        assert_eq!(status_bytes.size_display(), "512 B");
+
+        let status_kb = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: None,
+            size_bytes: Some(2048),
+            item_count: None,
+        };
+        assert_eq!(status_kb.size_display(), "2.0 KB");
+
+        let status_mb = CacheStatus {
+            cache_type: CacheType::Teams,
+            valid: true,
+            age_seconds: None,
+            size_bytes: Some(1048576),
+            item_count: None,
+        };
+        assert_eq!(status_mb.size_display(), "1.0 MB");
     }
 }

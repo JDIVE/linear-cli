@@ -8,6 +8,7 @@ use regex::Regex;
 
 use crate::cache::CacheOptions;
 use crate::error::CliError;
+use crate::json_path::get_path;
 use crate::pagination::PaginationOptions;
 use crate::OutputFormat;
 
@@ -281,7 +282,7 @@ fn render_template(template: &str, value: &Value) -> String {
             }
             let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
             match get_path(value, &parts) {
-                Some(found) => value_to_string(&found),
+                Some(found) => value_to_string(found),
                 None => String::new(),
             }
         })
@@ -319,16 +320,89 @@ fn has_object_key(value: &Value, key: &str) -> bool {
 fn compare_json_field(a: &Value, b: &Value, key: &str) -> Ordering {
     let a_key = extract_sort_key(a, key);
     let b_key = extract_sort_key(b, key);
-    a_key.cmp(&b_key)
+    a_key.partial_cmp(&b_key).unwrap_or(Ordering::Equal)
 }
 
-fn extract_sort_key(value: &Value, key: &str) -> String {
-    match value.get(key) {
-        Some(Value::String(s)) => s.to_lowercase(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::Bool(b)) => b.to_string(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
+#[derive(Debug, PartialEq)]
+enum SortKey {
+    Int(i64),
+    Float(f64),
+    DateTime(i64),
+    String(String),
+    Null,
+}
+
+impl PartialOrd for SortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (SortKey::Int(a), SortKey::Int(b)) => a.partial_cmp(b),
+            (SortKey::Float(a), SortKey::Float(b)) => a.partial_cmp(b),
+            (SortKey::DateTime(a), SortKey::DateTime(b)) => a.partial_cmp(b),
+            (SortKey::String(a), SortKey::String(b)) => a.partial_cmp(b),
+            (SortKey::Null, SortKey::Null) => Some(Ordering::Equal),
+            // Nulls sort last
+            (SortKey::Null, _) => Some(Ordering::Greater),
+            (_, SortKey::Null) => Some(Ordering::Less),
+            // Mixed numeric types: convert to float for comparison
+            (SortKey::Int(a), SortKey::Float(b)) => (*a as f64).partial_cmp(b),
+            (SortKey::Float(a), SortKey::Int(b)) => a.partial_cmp(&(*b as f64)),
+            // Different types: fall back to string comparison
+            _ => {
+                let a_str = self.to_string_for_cmp();
+                let b_str = other.to_string_for_cmp();
+                a_str.partial_cmp(&b_str)
+            }
+        }
+    }
+}
+
+impl SortKey {
+    fn to_string_for_cmp(&self) -> String {
+        match self {
+            SortKey::Int(n) => n.to_string(),
+            SortKey::Float(n) => n.to_string(),
+            SortKey::DateTime(ts) => ts.to_string(),
+            SortKey::String(s) => s.clone(),
+            SortKey::Null => String::new(),
+        }
+    }
+}
+
+fn extract_sort_key(value: &Value, key: &str) -> SortKey {
+    // Support nested paths like "state.name"
+    let v = if key.contains('.') {
+        let parts: Vec<&str> = key.split('.').filter(|p| !p.is_empty()).collect();
+        get_path(value, &parts).cloned()
+    } else {
+        value.get(key).cloned()
+    };
+
+    let v = match v {
+        Some(v) => v,
+        None => return SortKey::Null,
+    };
+
+    match v {
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                SortKey::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                SortKey::Float(f)
+            } else {
+                SortKey::String(n.to_string())
+            }
+        }
+        Value::String(s) => {
+            // Try parsing as RFC3339 date
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                SortKey::DateTime(dt.timestamp())
+            } else {
+                SortKey::String(s.to_lowercase())
+            }
+        }
+        Value::Bool(b) => SortKey::String(b.to_string()),
+        Value::Null => SortKey::Null,
+        other => SortKey::String(other.to_string()),
     }
 }
 
@@ -362,21 +436,13 @@ fn select_fields(value: &Value, fields: &[String]) -> Value {
                     continue;
                 }
                 if let Some(field_value) = get_path(value, &parts) {
-                    set_path(&mut out, &parts, field_value);
+                    set_path(&mut out, &parts, field_value.clone());
                 }
             }
             Value::Object(out)
         }
         _ => value.clone(),
     }
-}
-
-fn get_path(value: &Value, parts: &[&str]) -> Option<Value> {
-    let mut current = value;
-    for part in parts {
-        current = current.get(*part)?;
-    }
-    Some(current.clone())
 }
 
 fn set_path(out: &mut Map<String, Value>, parts: &[&str], value: Value) {
@@ -392,5 +458,100 @@ fn set_path(out: &mut Map<String, Value>, parts: &[&str], value: Value) {
         .or_insert_with(|| Value::Object(Map::new()));
     if let Value::Object(ref mut map) = entry {
         set_path(map, &parts[1..], value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_filter_eq() {
+        let filters = parse_filters(&["status=Done".to_string()]).unwrap();
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].path, vec!["status"]);
+        assert!(matches!(filters[0].op, FilterOp::Eq));
+        assert_eq!(filters[0].value, "Done");
+    }
+
+    #[test]
+    fn test_parse_filter_not_eq() {
+        let filters = parse_filters(&["priority!=1".to_string()]).unwrap();
+        assert_eq!(filters.len(), 1);
+        assert!(matches!(filters[0].op, FilterOp::NotEq));
+        assert_eq!(filters[0].value, "1");
+    }
+
+    #[test]
+    fn test_parse_filter_contains() {
+        let filters = parse_filters(&["title~=bug".to_string()]).unwrap();
+        assert_eq!(filters.len(), 1);
+        assert!(matches!(filters[0].op, FilterOp::Contains));
+        assert_eq!(filters[0].value, "bug");
+    }
+
+    #[test]
+    fn test_parse_filter_nested_path() {
+        let filters = parse_filters(&["state.name=In Progress".to_string()]).unwrap();
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].path, vec!["state", "name"]);
+        assert_eq!(filters[0].value, "In Progress");
+    }
+
+    #[test]
+    fn test_parse_filter_multiple() {
+        let filters =
+            parse_filters(&["status=Done".to_string(), "priority!=1".to_string()]).unwrap();
+        assert_eq!(filters.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_filter_empty_skipped() {
+        let filters = parse_filters(&["".to_string(), "  ".to_string()]).unwrap();
+        assert!(filters.is_empty());
+    }
+
+    #[test]
+    fn test_parse_filter_invalid() {
+        let result = parse_filters(&["invalid-filter".to_string()]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_filter_missing_path() {
+        let result = parse_filters(&["=value".to_string()]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sort_order_default() {
+        assert_eq!(SortOrder::default(), SortOrder::Asc);
+    }
+
+    #[test]
+    fn test_sort_nested_path() {
+        let mut values = vec![
+            json!({"name": "Charlie", "state": {"name": "Done"}}),
+            json!({"name": "Alice", "state": {"name": "Backlog"}}),
+            json!({"name": "Bob", "state": {"name": "In Progress"}}),
+        ];
+        sort_values(&mut values, "state.name", SortOrder::Asc);
+        assert_eq!(values[0]["state"]["name"], "Backlog");
+        assert_eq!(values[1]["state"]["name"], "Done");
+        assert_eq!(values[2]["state"]["name"], "In Progress");
+    }
+
+    #[test]
+    fn test_sort_top_level_field() {
+        let mut values = vec![
+            json!({"priority": 3}),
+            json!({"priority": 1}),
+            json!({"priority": 2}),
+        ];
+        sort_values(&mut values, "priority", SortOrder::Asc);
+        assert_eq!(values[0]["priority"], 1);
+        assert_eq!(values[1]["priority"], 2);
+        assert_eq!(values[2]["priority"], 3);
     }
 }

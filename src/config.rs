@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::io::Write;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Workspace {
     pub api_key: String,
@@ -60,7 +63,25 @@ pub fn load_config() -> Result<Config> {
 pub fn save_config(config: &Config) -> Result<()> {
     let path = config_path()?;
     let content = toml::to_string_pretty(config)?;
-    fs::write(path, content)?;
+
+    // Use secure file permissions on Unix (0600 = owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?;
+        file.write_all(content.as_bytes())?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, content)?;
+    }
+
     Ok(())
 }
 
@@ -90,6 +111,21 @@ pub fn get_api_key() -> Result<String> {
     if let Ok(api_key) = std::env::var("LINEAR_API_KEY") {
         if !api_key.is_empty() {
             return Ok(api_key);
+        }
+    }
+
+    // Try keyring if feature is enabled
+    #[cfg(feature = "secure-storage")]
+    {
+        let config = load_config()?;
+        let profile = std::env::var("LINEAR_CLI_PROFILE")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or(config.current.clone())
+            .unwrap_or_else(|| "default".to_string());
+
+        if let Ok(Some(key)) = crate::keyring::get_key(&profile) {
+            return Ok(key);
         }
     }
 

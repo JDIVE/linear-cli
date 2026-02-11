@@ -2,18 +2,27 @@ mod api;
 mod cache;
 mod commands;
 mod config;
+mod dates;
 mod error;
+mod input;
+mod json_path;
+#[cfg(feature = "secure-storage")]
+mod keyring;
 mod output;
 mod pagination;
+mod priority;
+mod retry;
 mod text;
+mod types;
+mod vcs;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 use commands::{
-    auth, bulk, comments, cycles, doctor, documents, git, initiatives, interactive, issues, labels,
-    notifications, projects, relations, search, statuses, sync, teams, templates, time, uploads,
-    users,
+    auth, bulk, comments, cycles, doctor, documents, export, favorites, git, history, initiatives,
+    interactive, issues, labels, metrics, notifications, projects, relations, roadmaps, search,
+    statuses, sync, teams, templates, time, triage, uploads, users, watch,
 };
 use error::CliError;
 use output::print_json;
@@ -196,6 +205,10 @@ struct Cli {
     #[arg(long, global = true)]
     dry_run: bool,
 
+    /// Number of retries for failed API requests (with exponential backoff)
+    #[arg(long, global = true, default_value = "0")]
+    retry: u32,
+
     /// Print JSON schema version info and exit
     #[arg(long, global = true)]
     schema: bool,
@@ -267,16 +280,6 @@ enum Commands {
         #[command(subcommand)]
         action: projects::ProjectCommands,
     },
-    /// Manage initiatives - list, create, update, archive initiatives
-    #[command(alias = "ini")]
-    #[command(after_help = r#"EXAMPLES:
-    linear initiatives list                  # List initiatives
-    linear ini get INITIATIVE_ID             # View initiative details
-    linear ini create "Q1 Growth"            # Create an initiative"#)]
-    Initiatives {
-        #[command(subcommand)]
-        action: initiatives::InitiativeCommands,
-    },
     /// Manage issues - list, create, update, assign, track issues
     #[command(alias = "i")]
     #[command(after_help = r#"EXAMPLES:
@@ -288,16 +291,6 @@ enum Commands {
     Issues {
         #[command(subcommand)]
         action: issues::IssueCommands,
-    },
-    /// Manage issue relations - blocks, duplicates, related, and children
-    #[command(alias = "rel")]
-    #[command(after_help = r#"EXAMPLES:
-    linear relations list ENG-1
-    linear rel add ENG-1 blocks ENG-2
-    linear rel remove ENG-1 blocked-by ENG-2"#)]
-    Relations {
-        #[command(subcommand)]
-        action: relations::RelationCommands,
     },
     /// Manage labels - create and organize project/issue labels
     #[command(alias = "l")]
@@ -478,6 +471,95 @@ Detects issue ID from branch names like:
   - feature/LIN-456-new-feature
   - scw-789-some-task"#)]
     Context,
+    /// Manage favorites - quick access to issues/projects
+    #[command(alias = "fav")]
+    #[command(after_help = r#"EXAMPLES:
+    linear favorites list                   # List favorites
+    linear fav add LIN-123                  # Add issue to favorites
+    linear fav remove LIN-123               # Remove from favorites"#)]
+    Favorites {
+        #[command(subcommand)]
+        action: favorites::FavoriteCommands,
+    },
+    /// Manage roadmaps - view roadmap planning
+    #[command(alias = "rm")]
+    #[command(after_help = r#"EXAMPLES:
+    linear roadmaps list                    # List all roadmaps
+    linear rm get ROADMAP_ID                # View roadmap details"#)]
+    Roadmaps {
+        #[command(subcommand)]
+        action: roadmaps::RoadmapCommands,
+    },
+    /// Manage initiatives - high-level tracking
+    #[command(alias = "init")]
+    #[command(after_help = r#"EXAMPLES:
+    linear initiatives list                 # List all initiatives
+    linear init get INITIATIVE_ID           # View initiative details"#)]
+    Initiatives {
+        #[command(subcommand)]
+        action: initiatives::InitiativeCommands,
+    },
+    /// Triage inbox - manage unassigned issues
+    #[command(alias = "tr")]
+    #[command(after_help = r#"EXAMPLES:
+    linear triage list                      # List triage issues
+    linear tr claim LIN-123                 # Claim an issue
+    linear tr snooze LIN-123 --duration 1w  # Snooze for a week"#)]
+    Triage {
+        #[command(subcommand)]
+        action: triage::TriageCommands,
+    },
+    /// View metrics - velocity, burndown, progress
+    #[command(alias = "mt")]
+    #[command(after_help = r#"EXAMPLES:
+    linear metrics cycle CYCLE_ID           # Cycle metrics
+    linear mt project PROJECT_ID            # Project progress
+    linear mt velocity TEAM --cycles 5      # Team velocity"#)]
+    Metrics {
+        #[command(subcommand)]
+        action: metrics::MetricsCommands,
+    },
+    /// Export issues to CSV or Markdown
+    #[command(alias = "exp")]
+    #[command(after_help = r#"EXAMPLES:
+    linear export csv --team ENG            # Export team issues to CSV
+    linear exp csv -f issues.csv            # Export to file
+    linear exp markdown --team ENG          # Export as Markdown"#)]
+    Export {
+        #[command(subcommand)]
+        action: export::ExportCommands,
+    },
+    /// View issue history and activity
+    #[command(alias = "hist")]
+    #[command(after_help = r#"EXAMPLES:
+    linear history issue LIN-123            # View issue activity
+    linear hist issue LIN-123 --limit 50    # More entries"#)]
+    History {
+        #[command(subcommand)]
+        action: history::HistoryCommands,
+    },
+    /// Watch for issue updates (polling)
+    #[command(after_help = r#"EXAMPLES:
+    linear watch LIN-123                    # Watch single issue
+    linear watch LIN-123 --interval 30      # Poll every 30 seconds"#)]
+    Watch {
+        /// Issue identifier to watch
+        id: String,
+        /// Polling interval in seconds
+        #[arg(short, long, default_value = "10")]
+        interval: u64,
+    },
+    /// Manage issue relationships - parent/child, blocking, related
+    #[command(alias = "rel")]
+    #[command(after_help = r#"EXAMPLES:
+    linear relations list LIN-123           # List issue relationships
+    linear rel add LIN-1 -r blocks LIN-2    # LIN-1 blocks LIN-2
+    linear rel parent LIN-2 LIN-1           # Set LIN-1 as parent of LIN-2
+    linear rel unparent LIN-2               # Remove parent"#)]
+    Relations {
+        #[command(subcommand)]
+        action: relations::RelationCommands,
+    },
     /// Configure CLI settings - API keys and workspaces
     #[command(after_help = r#"EXAMPLES:
     linear config set-key YOUR_API_KEY      # Set API key
@@ -580,6 +662,7 @@ async fn main() -> Result<()> {
     if let Some(profile) = cli.profile.as_deref() {
         std::env::set_var("LINEAR_CLI_PROFILE", profile);
     }
+    api::set_default_retry(cli.retry);
     let filters = parse_filters(&cli.filter)?;
     let pagination = PaginationOptions {
         limit: cli.limit,
@@ -631,7 +714,7 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     }
 
-    let result = run_command(cli.command, &output, agent_opts).await;
+    let result = run_command(cli.command, &output, agent_opts, cli.retry).await;
 
     match result {
         Ok(()) => std::process::exit(0),
@@ -698,6 +781,7 @@ async fn run_command(
     command: Commands,
     output: &OutputOptions,
     agent_opts: AgentOptions,
+    retry: u32,
 ) -> Result<()> {
     match command {
         Commands::Common => {
@@ -739,9 +823,7 @@ async fn run_command(
             println!("  Use --schema to print the current schema version.");
         }
         Commands::Projects { action } => projects::handle(action, output).await?,
-        Commands::Initiatives { action } => initiatives::handle(action, output).await?,
         Commands::Issues { action } => issues::handle(action, output, agent_opts).await?,
-        Commands::Relations { action } => relations::handle(action, output).await?,
         Commands::Labels { action } => labels::handle(action, output).await?,
         Commands::Teams { action } => teams::handle(action, output).await?,
         Commands::Users { action } => users::handle(action, output).await?,
@@ -759,7 +841,19 @@ async fn run_command(
         Commands::Time { action } => time::handle(action, output).await?,
         Commands::Uploads { action } => uploads::handle(action).await?,
         Commands::Interactive { team } => interactive::run(team).await?,
-        Commands::Context => handle_context(output, agent_opts).await?,
+        Commands::Context => handle_context(output, agent_opts, retry).await?,
+        Commands::Favorites { action } => favorites::handle(action, output).await?,
+        Commands::Roadmaps { action } => {
+            let pagination = PaginationOptions::default();
+            roadmaps::handle(action, output, &pagination).await?
+        }
+        Commands::Initiatives { action } => initiatives::handle(action, output).await?,
+        Commands::Triage { action } => triage::handle(action, output).await?,
+        Commands::Metrics { action } => metrics::handle(action, output).await?,
+        Commands::Export { action } => export::handle(action, output).await?,
+        Commands::History { action } => history::handle(action, output).await?,
+        Commands::Watch { id, interval } => watch::watch_issue(&id, interval, output).await?,
+        Commands::Relations { action } => relations::handle(action, output).await?,
         Commands::Auth { action } => auth::handle(action, output).await?,
         Commands::Doctor { check_api } => doctor::run(output, check_api).await?,
         Commands::Config { action } => match action {
@@ -804,7 +898,11 @@ async fn run_command(
 }
 
 /// Handle the context command - detect current Linear issue from git branch
-async fn handle_context(output: &OutputOptions, agent_opts: AgentOptions) -> Result<()> {
+async fn handle_context(
+    output: &OutputOptions,
+    agent_opts: AgentOptions,
+    retry: u32,
+) -> Result<()> {
     // Get current git branch
     let branch_output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -833,7 +931,7 @@ async fn handle_context(output: &OutputOptions, agent_opts: AgentOptions) -> Res
             return Ok(());
         }
         // Fetch issue details for JSON output
-        let client = api::LinearClient::new()?;
+        let client = api::LinearClient::new_with_retry(retry)?;
         let query = r#"
             query($id: String!) {
                 issue(id: $id) {
