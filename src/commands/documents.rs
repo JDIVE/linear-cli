@@ -4,7 +4,7 @@ use colored::Colorize;
 use serde_json::json;
 use tabled::{Table, Tabled};
 
-use crate::api::{resolve_project_id, LinearClient};
+use crate::api::{resolve_issue_id, resolve_project_id, LinearClient};
 use crate::display_options;
 use crate::input::read_ids_from_stdin;
 use crate::output::{ensure_non_empty, filter_values, print_json, sort_values, OutputOptions};
@@ -19,6 +19,9 @@ pub enum DocumentCommands {
         /// Filter by project ID
         #[arg(short, long)]
         project: Option<String>,
+        /// Filter by issue ID or identifier
+        #[arg(long)]
+        issue: Option<String>,
         /// Include archived documents
         #[arg(short, long)]
         archived: bool,
@@ -33,8 +36,16 @@ pub enum DocumentCommands {
         /// Document title
         title: String,
         /// Project name or ID to associate the document with
-        #[arg(short, long)]
-        project: String,
+        #[arg(
+            short,
+            long,
+            conflicts_with = "issue",
+            required_unless_present = "issue"
+        )]
+        project: Option<String>,
+        /// Issue ID or identifier to associate the document with
+        #[arg(long, conflicts_with = "project", required_unless_present = "project")]
+        issue: Option<String>,
         /// Document content (Markdown)
         #[arg(short, long)]
         content: Option<String>,
@@ -62,8 +73,11 @@ pub enum DocumentCommands {
         #[arg(long = "color-hex")]
         color_hex: Option<String>,
         /// New project name or ID
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "issue")]
         project: Option<String>,
+        /// New issue ID or identifier
+        #[arg(long, conflicts_with = "project")]
+        issue: Option<String>,
         /// Preview without updating (dry run)
         #[arg(long)]
         dry_run: bool,
@@ -87,6 +101,8 @@ struct DocumentRow {
     title: String,
     #[tabled(rename = "Project")]
     project: String,
+    #[tabled(rename = "Issue")]
+    issue: String,
     #[tabled(rename = "Updated")]
     updated: String,
     #[tabled(rename = "ID")]
@@ -95,9 +111,11 @@ struct DocumentRow {
 
 pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()> {
     match cmd {
-        DocumentCommands::List { project, archived } => {
-            list_documents(project, archived, output).await
-        }
+        DocumentCommands::List {
+            project,
+            issue,
+            archived,
+        } => list_documents(project, issue, archived, output).await,
         DocumentCommands::Get { ids } => {
             let final_ids = read_ids_from_stdin(ids);
             if final_ids.is_empty() {
@@ -108,10 +126,11 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
         DocumentCommands::Create {
             title,
             project,
+            issue,
             content,
             icon,
             color_hex,
-        } => create_document(&title, &project, content, icon, color_hex, output).await,
+        } => create_document(&title, project, issue, content, icon, color_hex, output).await,
         DocumentCommands::Update {
             id,
             title,
@@ -119,11 +138,12 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
             icon,
             color_hex,
             project,
+            issue,
             dry_run,
         } => {
             let dry_run = dry_run || output.dry_run;
             update_document(
-                &id, title, content, icon, color_hex, project, dry_run, output,
+                &id, title, content, icon, color_hex, project, issue, dry_run, output,
             )
             .await
         }
@@ -131,12 +151,76 @@ pub async fn handle(cmd: DocumentCommands, output: &OutputOptions) -> Result<()>
     }
 }
 
+pub(crate) async fn list_documents_for_issue(
+    issue: &str,
+    include_archived: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    list_documents(None, Some(issue.to_string()), include_archived, output).await
+}
+
+pub(crate) async fn create_document_for_issue(
+    issue: &str,
+    title: &str,
+    content: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    output: &OutputOptions,
+) -> Result<()> {
+    create_document(
+        title,
+        None,
+        Some(issue.to_string()),
+        content,
+        icon,
+        color,
+        output,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn update_issue_document(
+    id: &str,
+    title: Option<String>,
+    content: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    dry_run: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    update_document(id, title, content, icon, color, None, None, dry_run, output).await
+}
+
+pub(crate) async fn attach_document_to_issue(
+    issue: &str,
+    document_id: &str,
+    dry_run: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    set_document_issue_link(document_id, Some(issue), dry_run, output).await
+}
+
+pub(crate) async fn detach_document_from_issue(
+    document_id: &str,
+    dry_run: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    set_document_issue_link(document_id, None, dry_run, output).await
+}
+
 async fn list_documents(
-    project_id: Option<String>,
+    project: Option<String>,
+    issue: Option<String>,
     include_archived: bool,
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
+    let resolved_issue_id = if let Some(issue_ref) = issue.as_deref() {
+        Some(resolve_issue_id(&client, issue_ref, true).await?)
+    } else {
+        None
+    };
 
     let query = r#"
         query($includeArchived: Boolean, $first: Int, $after: String, $last: Int, $before: String) {
@@ -146,6 +230,7 @@ async fn list_documents(
                     title
                     updatedAt
                     project { id name }
+                    issue { id identifier title }
                 }
                 pageInfo {
                     hasNextPage
@@ -172,20 +257,19 @@ async fn list_documents(
     )
     .await?;
 
-    // Filter by project if specified
-    let mut filtered_docs: Vec<_> = if let Some(ref pid) = project_id {
-        documents
-            .iter()
-            .filter(|d| {
-                d["project"]["id"].as_str() == Some(pid.as_str())
-                    || d["project"]["name"].as_str().map(|n| n.to_lowercase())
-                        == Some(pid.to_lowercase())
-            })
-            .cloned()
-            .collect()
-    } else {
-        documents
-    };
+    let mut filtered_docs = documents;
+    if let Some(project_ref) = project.as_deref() {
+        filtered_docs.retain(|d| {
+            d["project"]["id"].as_str() == Some(project_ref)
+                || d["project"]["name"]
+                    .as_str()
+                    .map(|n| n.eq_ignore_ascii_case(project_ref))
+                    .unwrap_or(false)
+        });
+    }
+    if let Some(issue_id) = resolved_issue_id.as_deref() {
+        filtered_docs.retain(|d| d["issue"]["id"].as_str() == Some(issue_id));
+    }
 
     if output.is_json() || output.has_template() {
         print_json(&serde_json::json!(filtered_docs), output)?;
@@ -218,6 +302,7 @@ async fn list_documents(
             DocumentRow {
                 title: truncate(d["title"].as_str().unwrap_or(""), width),
                 project: truncate(d["project"]["name"].as_str().unwrap_or("-"), width),
+                issue: truncate(d["issue"]["identifier"].as_str().unwrap_or("-"), width),
                 updated,
                 id: d["id"].as_str().unwrap_or("").to_string(),
             }
@@ -247,6 +332,7 @@ async fn get_document(id: &str, output: &OutputOptions) -> Result<()> {
                 updatedAt
                 creator { name email }
                 project { id name }
+                issue { id identifier title }
             }
         }
     "#;
@@ -268,6 +354,14 @@ async fn get_document(id: &str, output: &OutputOptions) -> Result<()> {
 
     if let Some(project_name) = document["project"]["name"].as_str() {
         println!("Project: {}", project_name);
+    }
+    if let Some(issue_identifier) = document["issue"]["identifier"].as_str() {
+        let issue_title = document["issue"]["title"].as_str().unwrap_or("");
+        if issue_title.is_empty() {
+            println!("Issue: {}", issue_identifier);
+        } else {
+            println!("Issue: {} {}", issue_identifier, issue_title.dimmed());
+        }
     }
 
     if let Some(creator_name) = document["creator"]["name"].as_str() {
@@ -325,6 +419,7 @@ async fn get_documents(ids: &[String], output: &OutputOptions) -> Result<()> {
                         updatedAt
                         creator { name email }
                         project { id name }
+                        issue { id identifier title }
                     }
                 }
             "#;
@@ -350,19 +445,32 @@ async fn get_documents(ids: &[String], output: &OutputOptions) -> Result<()> {
 
 async fn create_document(
     title: &str,
-    project: &str,
+    project: Option<String>,
+    issue: Option<String>,
     content: Option<String>,
     icon: Option<String>,
     color: Option<String>,
     output: &OutputOptions,
 ) -> Result<()> {
     let client = LinearClient::new()?;
-    let project_id = resolve_project_id(&client, project, true).await?;
 
-    let mut input = json!({
-        "title": title,
-        "projectId": project_id
-    });
+    let mut input = json!({ "title": title });
+    match (project, issue) {
+        (Some(project_ref), None) => {
+            let project_id = resolve_project_id(&client, &project_ref, true).await?;
+            input["projectId"] = json!(project_id);
+        }
+        (None, Some(issue_ref)) => {
+            let issue_id = resolve_issue_id(&client, &issue_ref, true).await?;
+            input["issueId"] = json!(issue_id);
+        }
+        (Some(_), Some(_)) => {
+            anyhow::bail!("Use either --project or --issue, not both.");
+        }
+        (None, None) => {
+            anyhow::bail!("Provide either --project or --issue.");
+        }
+    }
 
     if let Some(c) = content {
         input["content"] = json!(c);
@@ -415,6 +523,7 @@ async fn update_document(
     icon: Option<String>,
     color: Option<String>,
     project: Option<String>,
+    issue: Option<String>,
     dry_run: bool,
     output: &OutputOptions,
 ) -> Result<()> {
@@ -436,6 +545,10 @@ async fn update_document(
     if let Some(project) = project {
         let project_id = resolve_project_id(&client, &project, true).await?;
         input["projectId"] = json!(project_id);
+    }
+    if let Some(issue) = issue {
+        let issue_id = resolve_issue_id(&client, &issue, true).await?;
+        input["issueId"] = json!(issue_id);
     }
 
     if input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -483,6 +596,104 @@ async fn update_document(
         println!("{} Document updated", "+".green());
     } else {
         anyhow::bail!("Failed to update document");
+    }
+
+    Ok(())
+}
+
+async fn set_document_issue_link(
+    document_id: &str,
+    issue: Option<&str>,
+    dry_run: bool,
+    output: &OutputOptions,
+) -> Result<()> {
+    let client = LinearClient::new()?;
+
+    let issue_value = if let Some(issue_ref) = issue {
+        let issue_id = resolve_issue_id(&client, issue_ref, true).await?;
+        json!(issue_id)
+    } else {
+        serde_json::Value::Null
+    };
+
+    if dry_run {
+        if output.is_json() || output.has_template() {
+            print_json(
+                &json!({
+                    "dry_run": true,
+                    "would_update": {
+                        "id": document_id,
+                        "input": {
+                            "issueId": issue_value,
+                        },
+                    }
+                }),
+                output,
+            )?;
+        } else if issue.is_some() {
+            println!(
+                "{}",
+                "[DRY RUN] Would attach document to issue:".yellow().bold()
+            );
+            println!("  Document: {}", document_id);
+        } else {
+            println!(
+                "{}",
+                "[DRY RUN] Would remove document from issue:"
+                    .yellow()
+                    .bold()
+            );
+            println!("  Document: {}", document_id);
+        }
+        return Ok(());
+    }
+
+    let mutation = r#"
+        mutation($id: String!, $input: DocumentUpdateInput!) {
+            documentUpdate(id: $id, input: $input) {
+                success
+                document {
+                    id
+                    title
+                    issue { id identifier title }
+                }
+            }
+        }
+    "#;
+
+    let result = client
+        .mutate(
+            mutation,
+            Some(json!({
+                "id": document_id,
+                "input": { "issueId": issue_value },
+            })),
+        )
+        .await?;
+
+    if result["data"]["documentUpdate"]["success"].as_bool() == Some(true) {
+        let document = &result["data"]["documentUpdate"]["document"];
+        if output.is_json() || output.has_template() {
+            print_json(document, output)?;
+            return Ok(());
+        }
+
+        if let Some(issue_identifier) = document["issue"]["identifier"].as_str() {
+            println!(
+                "{} Document linked: {} -> {}",
+                "+".green(),
+                document["id"].as_str().unwrap_or(document_id),
+                issue_identifier
+            );
+        } else {
+            println!(
+                "{} Document unlinked from issue: {}",
+                "+".green(),
+                document["id"].as_str().unwrap_or(document_id)
+            );
+        }
+    } else {
+        anyhow::bail!("Failed to update document issue link");
     }
 
     Ok(())

@@ -32,6 +32,8 @@ Reason: CLI is 10-50x more token-efficient than MCP tool calls.
 - View issue: `linear-cli i get LIN-123`
 - Start work: `linear-cli i start LIN-123` (assigns, sets In Progress, creates branch)
 - Update: `linear-cli i update LIN-123 -s Done`
+- Issue docs: `linear-cli i documents list LIN-123 --output json`
+- Create issue doc: `linear-cli i documents create LIN-123 "Runbook"`
 - Create PR: `linear-cli g pr LIN-123`
 - Search: `linear-cli s issues "query"`
 - Fetch upload: `linear-cli up fetch URL -f file.png`
@@ -46,6 +48,7 @@ For Linear.app operations, always use the linear-cli command-line tool:
 - linear-cli i list (list issues)
 - linear-cli i create "Title" -t TEAM (create issue)
 - linear-cli i get LIN-123 (view issue)
+- linear-cli i documents list LIN-123 --output json (issue documents)
 - linear-cli g pr LIN-123 (create PR)
 - linear-cli up fetch URL -f file.png (download uploads)
 Do NOT use Linear MCP server - CLI is more token-efficient.
@@ -65,6 +68,8 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 - `linear-cli i create "Title" -t TEAM` - Create issue
 - `linear-cli i get LIN-123` - View issue details
 - `linear-cli i update LIN-123 -s Done` - Update status
+- `linear-cli i documents list LIN-123 --output json` - List issue documents
+- `linear-cli i documents create LIN-123 "Runbook"` - Create issue document
 - `linear-cli g pr LIN-123` - Create GitHub PR
 - `linear-cli cm list ISSUE_ID --output json` - Get comments as JSON
 - `linear-cli up fetch URL -f file.png` - Download attachments
@@ -75,7 +80,7 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 ```
 RULE: Prefer linear-cli over Linear MCP for all Linear.app operations.
 REASON: CLI commands use 10-50x fewer tokens than MCP tool invocations.
-COMMANDS: linear-cli {issues|projects|git|search|uploads} - see linear-cli --help
+COMMANDS: linear-cli {issues|projects|git|search|uploads|documents} - see linear-cli --help
 SCHEMAS: JSON samples in docs/json/
 ```
 
@@ -86,6 +91,7 @@ SCHEMAS: JSON samples in docs/json/
 | List issues | `i list` | `linear-cli i list -t Engineering` |
 | Create issue | `i create` | `linear-cli i create "Bug" -t ENG -p 1` |
 | View issue | `i get` | `linear-cli i get LIN-123 --output json` |
+| Issue documents | `i documents` | `linear-cli i documents list LIN-123 --output json` |
 | Start work | `i start` | `linear-cli i start LIN-123 --checkout` |
 | Update issue | `i update` | `linear-cli i update LIN-123 -s Done` |
 | Create branch | `g checkout` | `linear-cli g checkout LIN-123` |
@@ -102,6 +108,6 @@ For quick Claude Code setup, run:
 mkdir -p ~/.claude && cat >> ~/.claude/CLAUDE.md << 'EOF'
 
 ## Linear: Use linear-cli (not MCP)
-Commands: i list, i create, i get, i start, g checkout, g pr, up fetch. Add --output json for parsing (or set LINEAR_CLI_OUTPUT=json).
+Commands: i list, i create, i get, i documents list, i start, g checkout, g pr, up fetch. Add --output json for parsing (or set LINEAR_CLI_OUTPUT=json).
 EOF
 ```

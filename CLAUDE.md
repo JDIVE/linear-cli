@@ -12,6 +12,8 @@ Use `linear-cli` for all Linear.app operations. Do NOT use Linear MCP tools - CL
 | Get multiple | `linear-cli i get LIN-1 LIN-2 LIN-3` |
 | Start work | `linear-cli i start LIN-123 --checkout` |
 | Update status | `linear-cli i update LIN-123 -s Done` |
+| List issue docs | `linear-cli i documents list LIN-123 --output json` |
+| Create issue doc | `linear-cli i documents create LIN-123 "Runbook"` |
 | Create PR | `linear-cli g pr LIN-123` |
 | Search | `linear-cli s issues "query"` |
 | Get context | `linear-cli context` |
@@ -51,6 +53,10 @@ linear-cli i create "Test" -t ENG --dry-run
 # Batch fetch multiple issues
 linear-cli i get LIN-1 LIN-2 LIN-3 --output json
 
+# Issue documents (preferred issue-scoped workflow)
+linear-cli i documents list LIN-123 --output json
+linear-cli i documents create LIN-123 "Runbook"
+
 # Pipe description from file
 cat desc.md | linear-cli i create "Title" -t ENG -d -
 
@@ -78,5 +84,6 @@ linear-cli agent
 - `4` = Rate limited
 
 ### Tips
-- Use short aliases: `i` (issues), `p` (projects), `g` (git), `s` (search), `cm` (comments), `ctx` (context)
+- Use short aliases: `i` (issues), `p` (projects), `g` (git), `s` (search), `cm` (comments), `d` (documents), `ctx` (context)
+- For issue-linked docs, prefer `i documents ...`; `d ... --issue ...` remains supported for compatibility
 - Run `linear-cli <command> --help` for full options

@@ -17,7 +17,7 @@ use crate::pagination::paginate_nodes;
 use crate::text::truncate;
 use crate::AgentOptions;
 
-use super::templates;
+use super::{documents, templates};
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum DueFilter {
@@ -264,6 +264,85 @@ pub enum IssueCommands {
         /// Issue ID or identifier
         id: String,
     },
+    /// Manage documents linked to issues
+    #[command(aliases = ["docs", "doc"])]
+    #[command(after_help = r#"EXAMPLES:
+    linear issues documents list LIN-123
+    linear i documents create LIN-123 "Runbook"
+    linear i documents add LIN-123 DOC_ID
+    linear i documents remove DOC_ID
+    linear i documents update DOC_ID --title "Updated title""#)]
+    Documents {
+        #[command(subcommand)]
+        action: IssueDocumentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IssueDocumentCommands {
+    /// List documents linked to an issue
+    #[command(alias = "ls")]
+    List {
+        /// Issue ID or identifier
+        issue: String,
+        /// Include archived documents
+        #[arg(short, long)]
+        archived: bool,
+    },
+    /// Create a new document linked to an issue
+    Create {
+        /// Issue ID or identifier
+        issue: String,
+        /// Document title
+        title: String,
+        /// Document content (Markdown)
+        #[arg(short, long)]
+        content: Option<String>,
+        /// Document icon (e.g., ":page_facing_up:")
+        #[arg(short, long)]
+        icon: Option<String>,
+        /// Icon color (hex color code)
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
+    },
+    /// Update an issue-linked document
+    Update {
+        /// Document ID
+        id: String,
+        /// New title
+        #[arg(short, long)]
+        title: Option<String>,
+        /// New content (Markdown)
+        #[arg(short, long)]
+        content: Option<String>,
+        /// New icon
+        #[arg(short, long)]
+        icon: Option<String>,
+        /// New color (hex)
+        #[arg(long = "color-hex")]
+        color_hex: Option<String>,
+        /// Preview without updating (dry run)
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Attach an existing document to an issue
+    Add {
+        /// Issue ID or identifier
+        issue: String,
+        /// Document ID
+        document_id: String,
+        /// Preview without updating (dry run)
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove a document from its linked issue (does not delete the document)
+    Remove {
+        /// Document ID
+        document_id: String,
+        /// Preview without updating (dry run)
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Tabled)]
@@ -486,6 +565,52 @@ pub async fn handle(
         IssueCommands::Unsubscribe { id, user } => unsubscribe_issue(&id, user, output).await,
         IssueCommands::Archive { id } => archive_issue(&id, output, agent_opts).await,
         IssueCommands::Unarchive { id } => unarchive_issue(&id, output, agent_opts).await,
+        IssueCommands::Documents { action } => handle_issue_documents(action, output).await,
+    }
+}
+
+async fn handle_issue_documents(cmd: IssueDocumentCommands, output: &OutputOptions) -> Result<()> {
+    match cmd {
+        IssueDocumentCommands::List { issue, archived } => {
+            documents::list_documents_for_issue(&issue, archived, output).await
+        }
+        IssueDocumentCommands::Create {
+            issue,
+            title,
+            content,
+            icon,
+            color_hex,
+        } => {
+            documents::create_document_for_issue(&issue, &title, content, icon, color_hex, output)
+                .await
+        }
+        IssueDocumentCommands::Update {
+            id,
+            title,
+            content,
+            icon,
+            color_hex,
+            dry_run,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            documents::update_issue_document(&id, title, content, icon, color_hex, dry_run, output)
+                .await
+        }
+        IssueDocumentCommands::Add {
+            issue,
+            document_id,
+            dry_run,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            documents::attach_document_to_issue(&issue, &document_id, dry_run, output).await
+        }
+        IssueDocumentCommands::Remove {
+            document_id,
+            dry_run,
+        } => {
+            let dry_run = dry_run || output.dry_run;
+            documents::detach_document_from_issue(&document_id, dry_run, output).await
+        }
     }
 }
 
@@ -751,6 +876,7 @@ async fn get_issues(ids: &[String], output: &OutputOptions) -> Result<()> {
                             dueDate
                             url
                             attachments { nodes { id title url createdAt } }
+                            documents { nodes { id title url updatedAt } }
                             state { name }
                             team { name }
                             assignee { name }
@@ -824,6 +950,7 @@ async fn get_issue(id: &str, output: &OutputOptions) -> Result<()> {
                 createdAt
                 updatedAt
                 attachments { nodes { id title url createdAt } }
+                documents { nodes { id title url updatedAt } }
                 state { name }
                 team { name }
                 assignee { name email }
@@ -897,6 +1024,13 @@ async fn get_issue(id: &str, output: &OutputOptions) -> Result<()> {
         if !labels.is_empty() {
             let label_names: Vec<&str> = labels.iter().filter_map(|l| l["name"].as_str()).collect();
             println!("Labels:   {}", label_names.join(", "));
+        }
+    }
+
+    if let Some(docs) = issue["documents"]["nodes"].as_array() {
+        if !docs.is_empty() {
+            let doc_refs: Vec<&str> = docs.iter().filter_map(|d| d["title"].as_str()).collect();
+            println!("Docs:     {}", doc_refs.join(", "));
         }
     }
 

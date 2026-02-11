@@ -53,6 +53,7 @@ fn test_issues_help() {
     assert_eq!(code, 0);
     assert!(stdout.contains("list"));
     assert!(stdout.contains("create"));
+    assert!(stdout.contains("documents"));
     assert!(stdout.contains("start"));
     assert!(stdout.contains("stop"));
     assert!(stdout.contains("remind"));
@@ -130,6 +131,42 @@ fn test_uploads_help() {
     assert!(stdout.contains("fetch"));
     assert!(stdout.contains("attach-url"));
     assert!(stdout.contains("upload"));
+}
+
+#[test]
+fn test_documents_help() {
+    let (code, stdout, _stderr) = run_cli(&["documents", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("update"));
+}
+
+#[test]
+fn test_documents_list_help_includes_issue_filter() {
+    let (code, stdout, _stderr) = run_cli(&["documents", "list", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--issue"));
+    assert!(stdout.contains("--project"));
+}
+
+#[test]
+fn test_documents_create_help_includes_issue_association() {
+    let (code, stdout, _stderr) = run_cli(&["documents", "create", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--issue"));
+    assert!(stdout.contains("--project"));
+}
+
+#[test]
+fn test_issue_documents_help() {
+    let (code, stdout, _stderr) = run_cli(&["issues", "documents", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("add"));
+    assert!(stdout.contains("remove"));
+    assert!(stdout.contains("update"));
 }
 
 #[test]

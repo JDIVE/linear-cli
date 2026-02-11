@@ -287,7 +287,8 @@ enum Commands {
     linear i list -t ENG -s "In Progress"   # Filter by team and status
     linear i get LIN-123                    # View issue details
     linear i create "Bug fix" -t ENG -p 2   # Create high priority issue
-    linear i update LIN-123 -s Done         # Update issue status"#)]
+    linear i update LIN-123 -s Done         # Update issue status
+    linear i documents list LIN-123         # List docs linked to an issue"#)]
     Issues {
         #[command(subcommand)]
         action: issues::IssueCommands,
@@ -345,7 +346,8 @@ enum Commands {
     #[command(after_help = r#"EXAMPLES:
     linear documents list                   # List all documents
     linear d get DOC_ID                     # View document
-    linear d create "Design Doc" -p PROJ_ID # Create document"#)]
+    linear d create "Design Doc" -p PROJ_ID # Create project document
+    linear i documents list LIN-123         # Preferred issue-document workflow"#)]
     Documents {
         #[command(subcommand)]
         action: documents::DocumentCommands,

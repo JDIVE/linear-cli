@@ -82,6 +82,7 @@ Run `linear-cli <command> --help` for detailed usage.
 linear-cli i list -t Engineering           # List team's issues
 linear-cli i create "Bug" -t ENG -p 1      # Create urgent issue
 linear-cli i update LIN-123 -s Done        # Update status
+linear-cli i documents list LIN-123         # List issue documents
 
 # Git workflow
 linear-cli g checkout LIN-123              # Create branch for issue

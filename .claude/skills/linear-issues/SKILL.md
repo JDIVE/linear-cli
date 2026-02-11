@@ -1,6 +1,6 @@
 ---
 name: linear-issues
-description: Manage Linear issues - list, create, update, start/stop work. Use when working with Linear issues, viewing tasks, creating bugs, or updating issue status.
+description: Manage Linear issues - list, create, update, start/stop work, and issue documents. Use when working with Linear issues, viewing tasks, creating bugs, updating issue status, or managing issue-linked docs.
 allowed-tools: Bash
 ---
 
@@ -40,7 +40,7 @@ linear-cli i get LIN-1 LIN-2 LIN-3 --output json
 ## Create Issues
 
 ```bash
-# Create issue (priority: 1=urgent, 2=high, 3=medium, 4=low)
+# Create issue (priority: 1=urgent, 2=high, 3=normal, 4=low)
 linear-cli i create "Bug: Login fails" -t Engineering -p 2
 
 # Create with status
@@ -92,6 +92,25 @@ linear-cli cm list LIN-123 --output json
 linear-cli cm create LIN-123 -b "Fixed in latest commit"
 ```
 
+## Issue Documents
+
+```bash
+# List documents linked to an issue
+linear-cli i documents list LIN-123 --output json
+
+# Create a document linked to an issue
+linear-cli i documents create LIN-123 "Runbook" --content "Initial notes"
+
+# Attach an existing document to an issue
+linear-cli i documents add LIN-123 DOC_ID
+
+# Update an issue-linked document
+linear-cli i documents update DOC_ID --title "Updated title"
+
+# Remove document from issue (does not delete document)
+linear-cli i documents remove DOC_ID
+```
+
 ## Context Detection
 
 ```bash
@@ -120,5 +139,6 @@ linear-cli context --output json
 ## Tips
 
 - Use `--output json` for machine-readable output
-- Short alias: `i` for issues, `cm` for comments, `ctx` for context
+- Short alias: `i` for issues, `cm` for comments, `d` for documents, `ctx` for context
+- Prefer issue-scoped docs workflow: `i documents ...` (`d ... --issue ...` is still supported)
 - Run `linear-cli i --help` for all options

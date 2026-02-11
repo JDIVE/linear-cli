@@ -13,7 +13,7 @@
 
 | Skill | Description |
 |-------|-------------|
-| `linear-issues` | Manage issues - list, create, update, start/stop work |
+| `linear-issues` | Manage issues - list, create, update, start/stop work, and issue documents |
 | `linear-pr` | Create GitHub PRs linked to Linear issues |
 | `linear-search` | Search issues and projects |
 | `linear-uploads` | Download attachments and images |

@@ -167,6 +167,13 @@ linear-cli d update DOC_ID --title "New title" --dry-run
 linear-cli d list --output json
 linear-cli d delete DOC_ID --force
 
+# Issue-scoped document workflow
+linear-cli i documents list LIN-123
+linear-cli i documents create LIN-123 "Incident Notes"
+linear-cli i documents add LIN-123 DOC_ID
+linear-cli i documents update DOC_ID --title "Postmortem"
+linear-cli i documents remove DOC_ID
+
 # Templates
 linear-cli tpl list
 linear-cli tpl list --output json

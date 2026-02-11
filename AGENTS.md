@@ -10,6 +10,8 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 - `linear-cli i get LIN-1 LIN-2 LIN-3` - Batch fetch multiple issues
 - `linear-cli i get LIN-123 --output json` - View as JSON
 - `linear-cli i update LIN-123 -s Done` - Update status
+- `linear-cli i documents list LIN-123 --output json` - List issue documents
+- `linear-cli i documents create LIN-123 "Runbook"` - Create issue document
 - `linear-cli i start LIN-123 --checkout` - Start work (assign + branch)
 - `linear-cli g pr LIN-123` - Create GitHub PR
 - `linear-cli g pr LIN-123 --draft` - Create draft PR
@@ -41,6 +43,7 @@ Use `linear-cli` for all Linear.app operations. Do not use Linear MCP tools.
 - Set `LINEAR_CLI_OUTPUT=json` to default all output to JSON
 - Errors with `--output json` return `{"error": true, "message": "...", "code": N, "details": {...}, "retry_after": N}`
 - `linear-cli i create/update` accept `--data` JSON input (use `-` for stdin)
+- For issue-linked docs, prefer `linear-cli i documents ...`; `linear-cli d ... --issue ...` remains supported
 - `linear-cli agent` prints agent-focused capabilities and examples
 - JSON samples live in `docs/json/`
 - Use `--help` on any command for full options
